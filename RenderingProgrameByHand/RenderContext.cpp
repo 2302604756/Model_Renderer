@@ -104,6 +104,9 @@ void RenderContext::Init(HWND hwnd, uint32_t width, uint32_t height) {
         THROW_IF_FAILED(m_frameResources[i].cmdList->Close());
 
         m_frameResources[i].fenceValue = 0;
+
+        //初始化每帧持有的gpu_uploadHeap
+        m_frameResources[i].frameUpload.Init(32 * 1024 * 1024, true);
     }
     //--------------------------------------------------------------------------
     //6.fence event初始化
@@ -113,21 +116,40 @@ void RenderContext::Init(HWND hwnd, uint32_t width, uint32_t height) {
 }
 
 void RenderContext::BeginFrame() {
-   auto &frame = m_frameResources[m_frameIndex];
-   if (frame.fenceValue > m_fence->GetCompletedValue()) {
-       THROW_IF_FAILED(m_fence->SetEventOnCompletion(frame.fenceValue, m_fenceEvent));
-       WaitForSingleObjectEx(m_fenceEvent, INFINITE, FALSE);
-   }
-   THROW_IF_FAILED(frame.cmdAllocator->Reset());
-   THROW_IF_FAILED(frame.cmdList->Reset(frame.cmdAllocator.Get(), nullptr));
+    auto b0 = std::chrono::high_resolution_clock::now();
+
+    auto& frame = m_frameResources[m_frameIndex];
+    m_lastWaitTriggered = 0;
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    if (frame.fenceValue > m_fence->GetCompletedValue()) {
+        m_lastWaitTriggered = 1;
+        THROW_IF_FAILED(m_fence->SetEventOnCompletion(frame.fenceValue, m_fenceEvent));
+        WaitForSingleObjectEx(m_fenceEvent, INFINITE, FALSE);
+    }
+    auto t1 = std::chrono::high_resolution_clock::now();
+    m_lastWaitMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
+
+    frame.frameUpload.Reset();
+    THROW_IF_FAILED(frame.cmdAllocator->Reset());
+    THROW_IF_FAILED(frame.cmdList->Reset(frame.cmdAllocator.Get(), nullptr));
+
+    auto b1 = std::chrono::high_resolution_clock::now();
+    m_lastBeginMs = std::chrono::duration<float, std::milli>(b1 - b0).count();
+
 }
 
 void RenderContext::EndFrame() {
+    auto t0 = std::chrono::high_resolution_clock::now();
     auto &frame = m_frameResources[m_frameIndex];
     THROW_IF_FAILED(frame.cmdList->Close());
     ID3D12CommandList* const lists[] = {frame.cmdList.Get()};
     m_commandQueue->ExecuteCommandLists(1,lists);
-    THROW_IF_FAILED(m_swapChain->Present(1, 0));
+    auto t1 = std::chrono::high_resolution_clock::now();
+    THROW_IF_FAILED(m_swapChain->Present(0, 0));
+    auto t2 = std::chrono::high_resolution_clock::now();
+    m_lastExecuteMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
+    m_lastPresentMs = std::chrono::duration<float, std::milli>(t2 - t1).count();
     // 4. 发出 GPU 时间线推进信号
     m_currentFenceValue++;
     frame.fenceValue = m_currentFenceValue;

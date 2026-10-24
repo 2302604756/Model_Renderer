@@ -1,12 +1,15 @@
 #pragma once
 #include "d3d12lite.h"
+#include "UploadHeap.h"
 #include <cstdint>
 #include <vector>
+#include <chrono>	
 
 struct FrameResource {
-	ComPtr<ID3D12CommandAllocator>  cmdAllocator;
+	ComPtr<ID3D12CommandAllocator>			cmdAllocator;
 	ComPtr<ID3D12GraphicsCommandList>		cmdList;
-	UINT64							fenceValue = 0;
+	UploadHeap								frameUpload;
+	UINT64									fenceValue = 0;
 };
 
 //用一个简易的Context类维护全局同步变量以及
@@ -40,6 +43,13 @@ public:
 
 	//用于时间实验
 	float time = 0.0f;
+
+	//用于监控EndFrame内用时
+	float GetLastExecuteMs() const noexcept { return m_lastExecuteMs; }
+	float GetLastPresentMs() const noexcept { return m_lastPresentMs; }
+	float GetLastWaitMs() const noexcept { return m_lastWaitMs; }
+	float GetLastBeginMs() const noexcept { return m_lastBeginMs; }
+	uint32_t GetLastWaitTriggered() const noexcept { return m_lastWaitTriggered; }
 	
 
 private:
@@ -61,6 +71,13 @@ private:
 	ComPtr<IDXGIFactory4>      m_factory;
 	ComPtr<ID3D12Device>       m_device;
 	ComPtr<IDXGISwapChain3>    m_swapChain;
+
+	//用于监控用时的变量
+	float m_lastExecuteMs = 0.0f;
+	float m_lastPresentMs = 0.0f;
+	float m_lastWaitMs = 0.0f;
+	float m_lastBeginMs = 0.0f;
+	uint32_t m_lastWaitTriggered = 0;
 	
 };
 

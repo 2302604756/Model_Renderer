@@ -15,6 +15,7 @@
 #include "App.h"
 
 #include <windows.h>
+#include <windowsx.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <wrl.h>
@@ -23,6 +24,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include "Input.h"
 
 
 
@@ -51,8 +54,23 @@ App g_app; // 全局或静态 App 实例
 // -----------------------------------------------------------------------------
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
-    case WM_PAINT:
-        g_app.RenderTick();
+    case WM_PAINT: {                      
+        PAINTSTRUCT ps;
+        BeginPaint(hwnd, &ps);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_KEYDOWN:  g_app.OnKeyDown(wParam);  return 0;
+    case WM_KEYUP:    g_app.OnKeyUp(wParam);    return 0;
+    case WM_KILLFOCUS: g_app.OnFocusLost();     return 0;
+    case WM_MOUSEMOVE: g_app.OnMouseMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)); return 0;
+    case WM_RBUTTONDOWN:
+        g_app.OnMouseButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        SetCapture(hwnd);                  // 拖出窗口也能继续收到鼠标消息
+        return 0;
+    case WM_RBUTTONUP:
+        g_app.OnMouseButtonUp();
+        ReleaseCapture();
         return 0;
     case WM_DESTROY:
         PostQuitMessage(0);

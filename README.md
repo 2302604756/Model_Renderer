@@ -17,6 +17,8 @@
 ## 📖 目录
 
 - [已实现的能力](#-已实现的能力)
+- [效果展示](#-效果展示)
+- [更新记录](#-更新记录)
 - [架构](#-架构)
 - [构建与运行](#-构建与运行)
 - [路线图](#-路线图)
@@ -38,7 +40,36 @@
 | 纹理与状态追踪 | `Texture2D` | `CreatePlaced` / `LoadFromFilePlaced`，内部记录 `m_currentState` 与 bindless 索引 |
 | 链式 PSO 构建 | `PipelineBuilder` | `SetRootSignature` / `SetInputLayout` / `SetShaders` / `SetRTVFormat` → `Build` |
 | DDS 纹理加载 | `dds_loader` | 自带 DDS 解析 |
+| 延迟渲染 | `RenderTexture` + 全屏 Lighting pass | G-buffer（albedo / world normal）+ 由深度重建世界坐标；debug 视图 1–6 |
+| 光线追踪 | `rt::AccelerationScene` | BLAS/TLAS 构建与 SRV 绑定，像素着色器 ray query：太阳阴影 + 纯光追 GI |
+| 逐实例 GPU 数据 | `GPU_UPLOAD` + bindless SRV | `GPUObjectData` 存每个实例的 world / normal / albedo / VB / IB 槽，供 GI 在命中点取几何属性 |
 | 应用层 | `App` | 持有上下文、两个描述符分配器、两个堆、PSO、网格与纹理，驱动单帧流程 |
+
+---
+
+## 📸 效果展示
+
+### 纯光追 GI（one-bounce path tracing，2026-10-24）
+
+Cornell Box 场景：主射线命中的可见点按余弦加权半球采样 2 条 GI 射线；命中点通过 `GPUObjectData` 取回世界位置 / 法线 / albedo，再打一条太阳阴影射线，累加成间接光（color bleeding）。当前为未累积的 2 SPP，噪点明显。
+
+| 视角 1（约 403 FPS） | 视角 2（约 692 FPS） |
+|:--:|:--:|
+| ![纯光追 GI - Cornell Box 视角 1](docs/images/rtgi-cornell-01.png) | ![纯光追 GI - Cornell Box 视角 2](docs/images/rtgi-cornell-02.png) |
+
+> 下一步：时间累积 + QMC（低差异序列）采样降噪，然后进入 DDGI 探针系统。
+
+---
+
+## 🗓 更新记录
+
+| 日期 | 更新内容 |
+|:--|:--|
+| 2026-10-24 | **纯光追 GI（one-bounce path tracing）**：命中点取几何属性 + 二次阴影射线，Cornell Box 出现 color bleeding；README 增加效果展示与更新记录模块 |
+| 2026-10-23 | **DXR 光追**：BLAS/TLAS 构建 + `rt::AccelerationScene` 封装 + 像素着色器 ray query 太阳阴影；`GPUObjectData` 走 GPU_UPLOAD + bindless SRV，供 GI 使用；README 补充工程笔记 |
+| 2026-10-22 | **延迟渲染**：G-buffer（albedo / world normal）+ 全屏 Lighting pass、`RenderTexture` 多渲染目标、debug 视图；GPU 计时体系（Record / Execute / Present / WaitGPU / WaitHit） |
+| 2026-10-22 | **多物体场景**：PerObject root constants + `MeshLibrary` + `RenderObject` 循环，bindless 顶点拉取；场景切换为 Cornell Box |
+| 2026-10-15 | **仓库初始化**：`RenderContext` 多帧在途、CPU/GPU 描述符分配器、`TransientHeap`、`UploadHeap`、`PipelineBuilder`、DDS 加载等基础骨架 |
 
 ---
 
@@ -269,3 +300,139 @@ struct GBufferOutput
 ## 📄 许可
 
 本仓库尚未声明开源许可证。若需转载或引用其中的代码，请先联系作者。
+
+
+
+
+
+//新内容：
+能否用D3D12_HEAP_TYPE_GPU_UPLOAD而不用D3D12_HEAP_TYPE_UPLOAD做逐帧瞬态分配 由FrameResource每帧持有UploadHeap
+我想到 我们可能还是需要Texture类的逐帧瞬态资源
+
+
+
+由FrameResource持有每帧的UploadHeap同时App持有一个用于上传纹理的UploadHeapGPU
+只需在初始每帧最初上传时通过一次经过一次PCIe 后面pass读取都是在VRAM上进行减少了访存时间消耗
+
+RootSignature
+采取和Pso一样的链式绑定法则
+
+在单一三角形这一简单渲染场景上看不出GPU_UPLOAD与UPLOAD之间的区别 我们通过以下方法来测验：
+1.首先增大frameUploadHeap空间 创建一个32MB的UploadHeap来增大防止在随机访问模式下也能在L2 Cache中读取到对应数据。确保每次访问都要去走PCIe或者通过VRAM来访问
+2.在UploadHeap中申请16MB内存并以SRV绑入Descriptor Heap 存储任何合法数据即可
+3.在Shader PS中通过伪随机来保证随机读取且实验过程可复制
+4.每次修改frameUploadHeap属性来对比不同情况下的帧率
+
+我们直接在IDE中调试会发现：两者区别巨大 uploadHeapGpu可达到60+FPS而普通upload仅有10fps左右 
+实验成功
+注：我们使用Nsights Graphics时未观察到uploadHeapGpu与普通upload区别：怀疑使用Nsight无法开启该功能
+验证：我们实际上在UploadHeap里实现了验证设备是否具有该功能 但似乎未奏效
+可能：Nsight为了监控实际资源 会把所有东西都放在host memory里
+
+https://zhuanlan.zhihu.com/p/2094516953906001899知乎地址
+
+
+几何缓冲系统：
+传统IA绑定 VS Bindless顶点拉取
+1.传统IA绑定走的是cmdList->IASetVertexBuffers，由 GPU 的固定功能硬件单元（IA）解包数据喂给 VSMain
+2.为什么做 DDGI 必须让 VertexBuffer 支持 Bindless SRV
+这是以后做GPU Driven的基础
+
+  float position[3]; // 12 Bytes
+  float normal[3];   // 12 Bytes
+  float uv[2];       // 8 Bytes
+  float tangent[4];  // 16 Bytes (xyz: 切线方向, w: 副切线手性符号)
+
+修改顶点缓冲区会有许多地方需要同步
+inputLayout，draw命令处的参数
+
+混合式拉取：indexbuffer使用cmdlist set，vertex buffer作为bindless SRV由索引读取
+在vertex shader中 可以读取SV_VertexID语义去获取到具体的顶点index
+    // (a) 从全局 Bindless 堆获取 IB 和 VB 的 StructuredBuffer 视图
+    StructuredBuffer<Vertex> vertexBuffer = ResourceDescriptorHeap[g_Push.vbIndex];
+    // (b) vertexID就是实际的index
+    Vertex vin = vertexBuffer[vertexID];
+好处：传统的IA在Compute Shader中是不可见的 而做成SRV则对于全局可见以后无论是做GPU Driven的剔除，DDGI都可以让Shader直接读取
+不用写InputLayout了好舒服，使PSO和顶点布局解耦
+顶点格式变自由
+混合式也利用到了IA的硬件能力：嫖到了顶点Cache，遇到重复的顶点减少了实际的Vertex Shader执行数量。
+
+坏处：如果遇到格式压缩的模型可能要手动解压
+依赖SM6.6 
+我们同时保留了SetView和Bindless 所以在做GPU Driven时也可以使用Index buffer的bindless形态
+
+注意：不要创建了.h文件后再通过改后缀的方式改成.cpp 这样编译器还是会把这个文件看成.h
+
+下一步：多mesh+实例化
+1.独立的Camera类与Input类
+这种都可以称为是边角系统 而bindless系统，render graph都可以称为主流程
+我们希望边角系统不去过度影响主流程
+
+2.每物体独立变化加法线矩阵
+现在的矩阵都是每帧常量，view和proj可以，但是model肯定不行啊
+我们现在把PushConstants + PerFrame改为了PerObject + PerFrame
+把PushConstants里的texture index，vertex index都塞进 PerObject 也符合我们最初的设计理念，由每个资源拥有自身的索引
+signature的大小为64个DWORD
+法线在mesh发生变换后需要使用W的逆来进行变换，这样算出来的normal才能一直和物体表面垂直
+
+我们要把 物体还没有作为数据存在 
+由MeshLibrary管理vector<Mesh>
+先都放在App里 是不是太臃肿了？
+用for循环去管理多个Mesh的Draw
+
+验证：bindless
+waithit是指有多少帧真的在 BeginFrame 里等到了 GPU（fence 等待被触发）
+
+目标：DDGI
+1.G-Buffer + 延迟光照
+G-buffer 资源 + 管线脚手架
+阶段1：导入Render Texture实现多渲染目标基础 
+阶段2：真实实现MRT 多pass 验证了MRT的真实实现
+新增了RenderTexture用于管理Geometry Pass的产物GBuffer 
+目前pass很乱后期会使用render graph进行管理
+
+2.DXR光追实现 BLAS/TLAS + 像素着色器 ray query 阴影
+光追流程以及api笔记：
+加速结构
+AccelerationStructure管理常驻资源，构建资源和实例缓冲
+BLAS + TLAS 两者是一种结构体只不过视角和高度不同：BLAS是每个mesh一人一份的，而TLAS则是每个instance一人一份的instance内部有仿射变换矩阵：可以让我们知道具体会有哪些instance都在哪些位置（instance是D3D12_RAYTRACING_INSTANCE_DESC结构体）
+目的是为了建树：
+BLAS进树是通过1.填写几何描述：D3D12_RAYTRACING_GEOMETRY_DESC
+2.填写建树策略：D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS
+3.获取显存大小：GetRaytracingAccelerationStructurePrebuildInfo
+4.根据获取显存大小去create resource和scratch
+5.建树：D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC
+BuildRaytracingAccelerationStructure
+
+而TLAS的建树策略则是按照instances位置建树
+
+BLAS关注微观每个mesh的每个顶点，TLAS则关注的是所有索引的每个位置
+
+如何将Ray Tracing引入：
+建好树后要把对应的TLAS设置为SRV暴露给shader
+我们要在Shader中使用:
+RaytracingAccelerationStructure g_TLAS : register(t3);
+float TraceSunShadow(float3 worldPos, float3 N, float3 L)
+{
+    RayDesc ray;
+    ray.Origin = worldPos + N * 0.002f;//防止自遮挡
+    ray.Direction = L;
+    ray.TMin = 0.0f;
+    ray.TMax = 100.0f;
+
+    RayQuery < RAY_FLAG_NONE > query;
+    query.TraceRayInline(g_TLAS, RAY_FLAG_NONE, 0xFF, ray);
+    query.Proceed();
+
+    return (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) ? 0.0f : 1.0f;
+}
+这样就调用了RT Core去从Origin射出的光线向L方向走出TMax的求交
+
+加入GI
+我们需要将每个Instance的数据也传入到Shader中：
+使用GPU_UPLOAD_HEAP来存储具体的GPU Object Data绑定到Bindless Descriptor Heap上（观测到雀氏使帧率得到提升）
+我们可以得到光追命中的目标的InstanceID只要我们在BLTS中填写的几何结构与我们传入到Shader
+中的几何结构一致，就可以通过得到的ID来访问到对应的Bindless堆上的GPUObjectData来得到具体的Albedo，Normal等值 
+光追不是魔法：硬件RT Core能为我们做的只是遍历BHV Tree找到Ray Tracing命中目标，返回InstanceID。Ray的Origin，Direction，用几次RayTracing怎么用都是我们自己规定的，ID来获取对应数据我们自己去写
+目前使用伪随机hash来写光线方向，故噪声较为严重
+后续可改成准蒙特卡洛采样：用低差异值序列+重要性采样做PBR

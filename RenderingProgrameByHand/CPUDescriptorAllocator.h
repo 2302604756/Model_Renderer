@@ -34,6 +34,7 @@ public:
 
 	void Init();
 	CPUDescriptorHandle RTVAllocate();
+	CPUDescriptorHandle DSVAllocate();
 
 	// 供 RenderContext / CommandList 绑定堆时使用
 	ID3D12DescriptorHeap*   GetBaseRTVHeap()  const noexcept { return m_rtvHeap.Get(); }

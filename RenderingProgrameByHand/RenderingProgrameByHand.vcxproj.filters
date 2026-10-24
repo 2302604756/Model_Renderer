@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="源文件">
@@ -34,14 +34,29 @@
     <Filter Include="Shader">
       <UniqueIdentifier>{f65a7ef1-2c4b-4f8e-990a-38b9ad520a8d}</UniqueIdentifier>
     </Filter>
-    <Filter Include="头文件\PSO">
-      <UniqueIdentifier>{ae2beecd-3e5c-4f38-80ec-53c15946b1d1}</UniqueIdentifier>
-    </Filter>
     <Filter Include="头文件\应用层">
       <UniqueIdentifier>{837869c7-a6d8-406e-9045-eb2ea9702a01}</UniqueIdentifier>
     </Filter>
     <Filter Include="源文件\应用层">
       <UniqueIdentifier>{5dc706e7-c798-4fd3-ab52-b7488b0c1a6f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\PSO_RS">
+      <UniqueIdentifier>{ae2beecd-3e5c-4f38-80ec-53c15946b1d1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\模型">
+      <UniqueIdentifier>{6edf07a7-655b-421e-ac5f-3468e18d1a55}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\environment">
+      <UniqueIdentifier>{4a657daf-e80c-472c-bc52-e23cf14d6cbf}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\environment">
+      <UniqueIdentifier>{822e298e-d1d3-4d1f-8fe0-7015a3a80626}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\RayTracing">
+      <UniqueIdentifier>{e599b765-6432-41ad-9349-e21b3763fe26}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\RayTracing">
+      <UniqueIdentifier>{f998c714-17d7-42f0-8a99-a7bbb1c833a3}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -75,15 +90,33 @@
     <ClCompile Include="RenderContext.cpp">
       <Filter>源文件\应用层</Filter>
     </ClCompile>
+    <ClCompile Include="RootSignature.cpp">
+      <Filter>源文件\Bindless</Filter>
+    </ClCompile>
+    <ClCompile Include="Mesh.cpp">
+      <Filter>源文件\Resource</Filter>
+    </ClCompile>
+    <ClCompile Include="DepthBuffer.cpp">
+      <Filter>源文件\Bindless</Filter>
+    </ClCompile>
+    <ClCompile Include="Camera.cpp">
+      <Filter>源文件\environment</Filter>
+    </ClCompile>
+    <ClCompile Include="Input.cpp">
+      <Filter>源文件\environment</Filter>
+    </ClCompile>
+    <ClCompile Include="MeshLibrary.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="RenderTexture.cpp">
+      <Filter>源文件\Resource</Filter>
+    </ClCompile>
+    <ClCompile Include="AccelerationStructure.cpp">
+      <Filter>源文件\RayTracing</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="d3d12lite.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="pass.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="d3d.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="CPUDescriptorAllocator.h">
@@ -95,9 +128,6 @@
     <ClInclude Include="Texture2D.h">
       <Filter>头文件\Resource</Filter>
     </ClInclude>
-    <ClInclude Include="dds_loader.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="GpuMemoryBlock.h">
       <Filter>头文件\Resource</Filter>
     </ClInclude>
@@ -105,7 +135,7 @@
       <Filter>头文件\Resource</Filter>
     </ClInclude>
     <ClInclude Include="PipelineBuilder.h">
-      <Filter>头文件\PSO</Filter>
+      <Filter>头文件\PSO_RS</Filter>
     </ClInclude>
     <ClInclude Include="App.h">
       <Filter>头文件\应用层</Filter>
@@ -115,6 +145,45 @@
     </ClInclude>
     <ClInclude Include="RenderContext.h">
       <Filter>头文件\应用层</Filter>
+    </ClInclude>
+    <ClInclude Include="RootSignature.h">
+      <Filter>头文件\Bindless</Filter>
+    </ClInclude>
+    <ClInclude Include="Mesh.h">
+      <Filter>头文件\Resource</Filter>
+    </ClInclude>
+    <ClInclude Include="Model.h">
+      <Filter>头文件\模型</Filter>
+    </ClInclude>
+    <ClInclude Include="DepthBuffer.h">
+      <Filter>头文件\Bindless</Filter>
+    </ClInclude>
+    <ClInclude Include="Camera.h">
+      <Filter>头文件\environment</Filter>
+    </ClInclude>
+    <ClInclude Include="Input.h">
+      <Filter>头文件\environment</Filter>
+    </ClInclude>
+    <ClInclude Include="MeshLibrary.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="RenderTexture.h">
+      <Filter>头文件\Resource</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneData.h">
+      <Filter>头文件\environment</Filter>
+    </ClInclude>
+    <ClInclude Include="AccelerationStructure.h">
+      <Filter>头文件\RayTracing</Filter>
+    </ClInclude>
+    <ClInclude Include="dds_loader.h">
+      <Filter>3rd</Filter>
+    </ClInclude>
+    <ClInclude Include="d3d12lite.h">
+      <Filter>3rd</Filter>
+    </ClInclude>
+    <ClInclude Include="d3d.h">
+      <Filter>3rd</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

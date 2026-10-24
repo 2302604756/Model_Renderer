@@ -48,3 +48,15 @@ CPUDescriptorHandle CPUDescriptorAllocator::RTVAllocate() {
 	m_rtvFreeLists.pop_back();
 	return{ handle,slot };
 }
+
+CPUDescriptorHandle CPUDescriptorAllocator::DSVAllocate() {
+	ID3D12Device* device = RenderContext::Get().GetDevice();
+	//使用断言来检测slot是否分配完全 仅在debug生效
+	assert(!m_dsvFreeLists.empty() && "CPU Descriptor Pool Exhausted!");
+	uint32_t slot = m_dsvFreeLists.back();
+	uint32_t size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+	//计算实际handle base+offset
+	D3D12_CPU_DESCRIPTOR_HANDLE handle = { m_baseDSVHanle.ptr + slot * size };
+	m_dsvFreeLists.pop_back();
+	return{ handle,slot };
+}

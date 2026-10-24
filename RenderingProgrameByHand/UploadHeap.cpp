@@ -8,12 +8,19 @@ UploadHeap::~UploadHeap() {
     }
 }
 
-void  UploadHeap::Init(uint64_t capacity) {
+void  UploadHeap::Init(uint64_t capacity,bool preferGpuUpload) {
     ID3D12Device* device = RenderContext::Get().GetDevice();
     m_capacity = capacity;
+    
+    // 新增： 检测硬件与 BIOS 是否支持 D3D12_HEAP_TYPE_GPU_UPLOAD (ReBAR) 同时可以手动设置
+    D3D12_FEATURE_DATA_D3D12_OPTIONS16 options16{};
+    if (preferGpuUpload && SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS16, &options16, sizeof(options16)))) {
+        m_isGpuUpload = (options16.GPUUploadHeapSupported == TRUE);
+    }
 
-    D3D12_HEAP_PROPERTIES heapProps = {};
-    heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+    //判断是否使用GPU_UPLOAD
+    D3D12_HEAP_PROPERTIES heapProps{};
+    heapProps.Type = m_isGpuUpload ? D3D12_HEAP_TYPE_GPU_UPLOAD : D3D12_HEAP_TYPE_UPLOAD;
 
     D3D12_RESOURCE_DESC bufferDesc = {};
     bufferDesc.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;

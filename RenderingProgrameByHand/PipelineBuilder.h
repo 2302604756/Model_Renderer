@@ -28,8 +28,12 @@ public:
         m_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
         m_desc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
         m_desc.RasterizerState.DepthClipEnable = TRUE;
+        m_desc.RasterizerState.FrontCounterClockwise = TRUE;
+
         m_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-        m_desc.DepthStencilState.DepthEnable = FALSE;
+        m_desc.DepthStencilState.DepthEnable = TRUE;
+
+
     }
 
     PipelineBuilder& SetRootSignature(ID3D12RootSignature* rs) {
@@ -54,10 +58,42 @@ public:
         return *this;
     }
 
+    PipelineBuilder& SetDepthFormat(DXGI_FORMAT format) {
+        m_desc.DSVFormat = format;                                  // PSO 必须声明深度格式
+        m_desc.DepthStencilState.DepthEnable = TRUE;
+        m_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        m_desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS; // 越近越先通过
+        return *this;
+    }
+
+
     ComPtr<ID3D12PipelineState> Build(ID3D12Device* device) {
         ComPtr<ID3D12PipelineState> pso;
         THROW_IF_FAILED(device->CreateGraphicsPipelineState(&m_desc, IID_PPV_ARGS(&pso)));
         return pso;
+    }
+
+    PipelineBuilder& SetRTVFormats(const DXGI_FORMAT* formats, uint32_t count) {
+        m_desc.NumRenderTargets = count;
+        for (uint32_t i = 0; i < count; ++i) {
+            m_desc.RTVFormats[i] = formats[i];
+            // MRT 的每个目标都必须显式打开写掩码，否则 RT1 不会被写
+            m_desc.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        }
+        return *this;
+    }
+
+    PipelineBuilder& SetDepthDisabled() {
+        m_desc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+        m_desc.DepthStencilState.DepthEnable = FALSE;
+        m_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        m_desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        return *this;
+    }
+
+    PipelineBuilder& SetCullNone() {
+        m_desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        return *this;
     }
 
 private:
