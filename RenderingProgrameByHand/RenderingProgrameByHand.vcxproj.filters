@@ -58,6 +58,18 @@
     <Filter Include="源文件\RayTracing">
       <UniqueIdentifier>{f998c714-17d7-42f0-8a99-a7bbb1c833a3}</UniqueIdentifier>
     </Filter>
+    <Filter Include="GpuData">
+      <UniqueIdentifier>{9620cea7-cced-4bd1-906e-0fa3cc6f837f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Scene">
+      <UniqueIdentifier>{170d64e9-f828-4f82-ad80-85c0c68adeeb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\Pass">
+      <UniqueIdentifier>{24147ee8-e5f1-4b1a-8bb3-4c1e3c9a793c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="探针">
+      <UniqueIdentifier>{6cadea2e-996c-4edb-b495-324e9a3794d5}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="d3d12lite.cpp">
@@ -114,11 +126,38 @@
     <ClCompile Include="AccelerationStructure.cpp">
       <Filter>源文件\RayTracing</Filter>
     </ClCompile>
+    <ClCompile Include="Scene.cpp">
+      <Filter>Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneGpuData.cpp">
+      <Filter>Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="RenderGraph.cpp">
+      <Filter>头文件\Pass</Filter>
+    </ClCompile>
+    <ClCompile Include="GBufferPass.cpp">
+      <Filter>头文件\Pass</Filter>
+    </ClCompile>
+    <ClCompile Include="LightingPass.cpp">
+      <Filter>头文件\Pass</Filter>
+    </ClCompile>
+    <ClCompile Include="ComputeSmokePass.cpp">
+      <Filter>头文件\Pass</Filter>
+    </ClCompile>
+    <ClCompile Include="ProbeGrid.cpp">
+      <Filter>探针</Filter>
+    </ClCompile>
+    <ClCompile Include="ProbeUpdatePass.cpp">
+      <Filter>探针</Filter>
+    </ClCompile>
+    <ClCompile Include="ProbeBorderFixupPass.cpp">
+      <Filter>探针</Filter>
+    </ClCompile>
+    <ClCompile Include="ProbeDistancePass.cpp">
+      <Filter>探针</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="pass.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="CPUDescriptorAllocator.h">
       <Filter>头文件\Bindless</Filter>
     </ClInclude>
@@ -170,9 +209,6 @@
     <ClInclude Include="RenderTexture.h">
       <Filter>头文件\Resource</Filter>
     </ClInclude>
-    <ClInclude Include="SceneData.h">
-      <Filter>头文件\environment</Filter>
-    </ClInclude>
     <ClInclude Include="AccelerationStructure.h">
       <Filter>头文件\RayTracing</Filter>
     </ClInclude>
@@ -185,6 +221,60 @@
     <ClInclude Include="d3d.h">
       <Filter>3rd</Filter>
     </ClInclude>
+    <ClInclude Include="FrameConstants.h">
+      <Filter>GpuData</Filter>
+    </ClInclude>
+    <ClInclude Include="ObjectConstants.h">
+      <Filter>GpuData</Filter>
+    </ClInclude>
+    <ClInclude Include="LightingTypes.h">
+      <Filter>GpuData</Filter>
+    </ClInclude>
+    <ClInclude Include="InstanceData.h">
+      <Filter>GpuData</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneTypes.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="DataTotal.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="Scene.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneGpuData.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="RenderGraph.h">
+      <Filter>头文件\Pass</Filter>
+    </ClInclude>
+    <ClInclude Include="pass.h">
+      <Filter>头文件\Pass</Filter>
+    </ClInclude>
+    <ClInclude Include="GBufferPass.h">
+      <Filter>头文件\Pass</Filter>
+    </ClInclude>
+    <ClInclude Include="LightingPass.h">
+      <Filter>头文件\Pass</Filter>
+    </ClInclude>
+    <ClInclude Include="ComputeSmokePass.h">
+      <Filter>头文件\Pass</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeGrid.h">
+      <Filter>探针</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeUpdatePass.h">
+      <Filter>探针</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeBorderFixupPass.h">
+      <Filter>探针</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeTypes.h">
+      <Filter>探针</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeDistancePass.h">
+      <Filter>探针</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="Readme.md">
@@ -193,7 +283,19 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="Shaders.hlsl">
+    <FxCompile Include="ShadersCommon.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="ShadersGBuffer.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="ShadersLighting.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="ShadersCompute.hlsl">
+      <Filter>Shader</Filter>
+    </FxCompile>
+    <FxCompile Include="ShadersProbe.hlsl">
       <Filter>Shader</Filter>
     </FxCompile>
   </ItemGroup>

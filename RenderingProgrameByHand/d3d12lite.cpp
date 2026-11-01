@@ -306,17 +306,20 @@ namespace d3d12lite {
 #endif
         };
 
-        // 3. 执行编译
+        // 3. 创建默认 include handler
+        ComPtr<IDxcIncludeHandler> includeHandler;
+        THROW_IF_FAILED(utils->CreateDefaultIncludeHandler(&includeHandler));
+
+        // 4. 执行编译（把 nullptr 换成 includeHandler）
         ComPtr<IDxcResult> result;
         THROW_IF_FAILED(compiler->Compile(
             &sourceBuffer,
             arguments.data(),
             static_cast<uint32_t>(arguments.size()),
-            nullptr,
-            IID_PPV_ARGS(&result)
-        ));
+            includeHandler.Get(),          // ← 改这里
+            IID_PPV_ARGS(&result)));
 
-        // 4. 检查编译错误日志
+        // 5. 检查编译错误日志
         ComPtr<IDxcBlobUtf8> errors;
         result->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errors), nullptr);
         if (errors && errors->GetStringLength() > 0) {

@@ -4,7 +4,7 @@
 #include <wrl.h>
 #include <vector>
 #include <cstdint>
-#include "SceneData.h"
+#include "SceneTypes.h"
 #include "MeshLibrary.h"
 #include "BindlessDescriptorHeap.h"
 

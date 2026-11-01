@@ -132,16 +132,26 @@
     <ClCompile Include="App.cpp" />
     <ClCompile Include="BindlessDescriptorHeap.cpp" />
     <ClCompile Include="Camera.cpp" />
+    <ClCompile Include="ComputeSmokePass.cpp" />
     <ClCompile Include="CPUDescriptorAllocator.cpp" />
     <ClCompile Include="d3d12lite.cpp" />
     <ClCompile Include="dds_loader.cpp" />
+    <ClCompile Include="GBufferPass.cpp" />
     <ClCompile Include="Input.cpp" />
+    <ClCompile Include="LightingPass.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Mesh.cpp" />
     <ClCompile Include="MeshLibrary.cpp" />
+    <ClCompile Include="ProbeBorderFixupPass.cpp" />
+    <ClCompile Include="ProbeDistancePass.cpp" />
+    <ClCompile Include="ProbeGrid.cpp" />
+    <ClCompile Include="ProbeUpdatePass.cpp" />
     <ClCompile Include="RenderContext.cpp" />
+    <ClCompile Include="RenderGraph.cpp" />
     <ClCompile Include="RenderTexture.cpp" />
     <ClCompile Include="RootSignature.cpp" />
+    <ClCompile Include="Scene.cpp" />
+    <ClCompile Include="SceneGpuData.cpp" />
     <ClCompile Include="Texture2D.cpp" />
     <ClCompile Include="TransientHeap.cpp" />
     <ClCompile Include="UploadHeap.cpp" />
@@ -151,9 +161,11 @@
     <ClInclude Include="App.h" />
     <ClInclude Include="BindlessDescriptorHeap.h" />
     <ClInclude Include="Camera.h" />
+    <ClInclude Include="ComputeSmokePass.h" />
     <ClInclude Include="CPUDescriptorAllocator.h" />
     <ClInclude Include="d3d.h" />
     <ClInclude Include="d3d12lite.h" />
+    <ClInclude Include="DataTotal.h" />
     <ClInclude Include="dds_loader.h" />
     <ClCompile Include="DepthBuffer.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">false</ExcludedFromBuild>
@@ -162,17 +174,31 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
     </ClCompile>
     <ClInclude Include="DepthBuffer.h" />
+    <ClInclude Include="FrameConstants.h" />
+    <ClInclude Include="GBufferPass.h" />
     <ClInclude Include="GpuMemoryBlock.h" />
     <ClInclude Include="Input.h" />
+    <ClInclude Include="InstanceData.h" />
+    <ClInclude Include="LightingPass.h" />
+    <ClInclude Include="LightingTypes.h" />
     <ClInclude Include="Mesh.h" />
     <ClInclude Include="MeshLibrary.h" />
     <ClInclude Include="Model.h" />
+    <ClInclude Include="ObjectConstants.h" />
     <ClInclude Include="PipelineBuilder.h" />
+    <ClInclude Include="ProbeBorderFixupPass.h" />
+    <ClInclude Include="ProbeDistancePass.h" />
+    <ClInclude Include="ProbeGrid.h" />
+    <ClInclude Include="ProbeTypes.h" />
+    <ClInclude Include="ProbeUpdatePass.h" />
     <ClInclude Include="RenderContext.h" />
     <ClInclude Include="pass.h" />
+    <ClInclude Include="RenderGraph.h" />
     <ClInclude Include="RenderTexture.h" />
     <ClInclude Include="RootSignature.h" />
-    <ClInclude Include="SceneData.h" />
+    <ClInclude Include="Scene.h" />
+    <ClInclude Include="SceneGpuData.h" />
+    <ClInclude Include="SceneTypes.h" />
     <ClInclude Include="Texture2D.h" />
     <ClInclude Include="TransientHeap.h" />
     <ClInclude Include="UploadHeap.h" />
@@ -182,15 +208,31 @@
     <None Include="Readme.md" />
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="Shaders.hlsl">
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">6.6</ShaderModel>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">6.6</ShaderModel>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">6.6</ShaderModel>
-      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">6.6</ShaderModel>
-      <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">VSMain</EntryPointName>
-      <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">VSMain</EntryPointName>
-      <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">VSMain</EntryPointName>
-      <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">VSMain</EntryPointName>
+    <FxCompile Include="ShadersCommon.hlsl">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </FxCompile>
+    <FxCompile Include="ShadersCompute.hlsl">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </FxCompile>
+    <FxCompile Include="ShadersGBuffer.hlsl">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </FxCompile>
+    <FxCompile Include="ShadersLighting.hlsl">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </FxCompile>
+    <FxCompile Include="ShadersProbe.hlsl">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>

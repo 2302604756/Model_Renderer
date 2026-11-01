@@ -1,5 +1,9 @@
 #include "App.h"
+#include "FrameConstants.h"
+#include "ObjectConstants.h"
+#include "InstanceData.h"
 #include <cmath>
+#include <cstring>
 
 
 void App::init(HWND hwnd) {
@@ -76,10 +80,11 @@ void App::init(HWND hwnd) {
 
 
 	// ① 场景先建好：TLAS 的实例数据来自 m_objects
-	BuildScene();
-	BuildInstances();
+	m_scene.Build(m_cubeMeshId, m_sphereMeshId, m_textureIndex);
+	BuildLights();                       
+	m_sceneGpuData.Build(device, m_gpuAllocator, m_meshLibrary, m_scene);
 	// ② 录制 BLAS/TLAS 构建命令（和上面的拷贝命令共用同一条命令列表）
-	m_rtScene.Build(device, frame.cmdList.Get(), m_meshLibrary, m_objects);
+	m_rtScene.Build(device, frame.cmdList.Get(), m_meshLibrary, m_scene.GetObjects());
 
 	// 提交拷贝指令并等待 GPU 彻底完成搬运
 	THROW_IF_FAILED(frame.cmdList->Close());
@@ -101,17 +106,19 @@ void App::init(HWND hwnd) {
 	m_rootSignature = RootSignatureBuilder()
 		.Add32BitConstants(40, 0)    // Root Parameter [0] -> register(b0): Push Constants    索引
 		.AddRootCBV(1)               // Root Parameter [1] -> register(b1): 逐帧瞬态 CBV	  传入Constant Buffer
-		.Add32BitConstants(8, 2)     // b2: lighting pass 参数
+		.Add32BitConstants(16, 2)    // [2] b2 lighting 参数（16 DWORD）
 		.AddRootDescriptorTable(3)   // [3] t3 TLAS
+		.AddRootCBV(3)               // [4] b3 光照常量
+		.AddRootSRV(5)               // [5] t5 光源数组
 		.AddDefaultStaticSamplers()  // Static Sampler    -> register(s0), register(s1)       sampler
 		.Build(device);
 
 	//==================================================================================================================
 	//PSO init
-	auto vsObjectBlob = d3d12lite::CompileShaderSM66(L"Shaders.hlsl", L"VSMain", L"vs_6_6");
-	auto gbufferPsBlob = d3d12lite::CompileShaderSM66(L"Shaders.hlsl", L"GBufferPS", L"ps_6_6");
-	auto lightingVsBlob = d3d12lite::CompileShaderSM66(L"Shaders.hlsl", L"LightingVS", L"vs_6_6");
-	auto lightingPsBlob = d3d12lite::CompileShaderSM66(L"Shaders.hlsl", L"LightingPS", L"ps_6_6");
+	auto vsObjectBlob = d3d12lite::CompileShaderSM66(L"ShadersGBuffer.hlsl", L"VSMain", L"vs_6_6");
+	auto gbufferPsBlob = d3d12lite::CompileShaderSM66(L"ShadersGBuffer.hlsl", L"GBufferPS", L"ps_6_6");
+	auto lightingVsBlob = d3d12lite::CompileShaderSM66(L"ShadersLighting.hlsl", L"LightingVS", L"vs_6_6");
+	auto lightingPsBlob = d3d12lite::CompileShaderSM66(L"ShadersLighting.hlsl", L"LightingPS", L"ps_6_6");
 	assert(!vsObjectBlob.empty() && !gbufferPsBlob.empty()
 		&& !lightingVsBlob.empty() && !lightingPsBlob.empty());
 
@@ -140,8 +147,149 @@ void App::init(HWND hwnd) {
 		.SetDepthDisabled()
 		.SetCullNone()
 		.Build(device);
-	//==================================================================================================================
 
+
+	//==================================================================================================================
+		// ---- compute 根签名 + PSO ----
+	m_computeRootSignature = RootSignatureBuilder()
+		.Add32BitConstants(8, 0)          // b0: ComputeParams
+		.Build(device, /*allowInputLayout*/ false);
+
+	auto computeCsBlob = d3d12lite::CompileShaderSM66(
+		L"ShadersCompute.hlsl", L"ComputeSmokeCS", L"cs_6_6");
+	assert(!computeCsBlob.empty());
+
+	PipelineBuilder computeBuilder;
+	m_computePSO = computeBuilder.BuildCompute(
+		device, m_computeRootSignature.Get(), computeCsBlob);
+
+	// ---- compute 输出纹理（UAV + SRV）----
+	m_computeTexture.InitUAV(device, m_gpuAllocator, 1920, 1080, DXGI_FORMAT_R8G8B8A8_UNORM);
+
+	m_computeTextureId = m_graph.RegisterResource(
+		"ComputeTexture", m_computeTexture.GetResource(),
+		D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+	m_computeSmokePass.Init(
+		m_computeRootSignature.Get(), m_computePSO.Get(),
+		&m_computeTexture, m_computeTextureId, 1920, 1080);
+
+	//======================================================================================================================================
+		// ---- DDGI 探针网格 ----
+	m_probeGrid.Init(device, m_gpuAllocator, ProbeGrid::Desc{});
+	m_probeGridId = m_graph.RegisterResource(
+		"ProbeGrid", m_probeGrid.GetResource(),
+		D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+	// 距离矩 atlas（初始就是 UAV）
+	m_probeDistanceId = m_graph.RegisterResource(
+		"ProbeDistanceAtlas", m_probeGrid.GetDistanceResource(),
+		D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+	// ---- probe compute 根签名 ----
+	m_probeRootSignature = RootSignatureBuilder()
+		.Add32BitConstants(16, 4)   // b4: ProbeUpdateParams
+		.Add32BitConstants(16, 2)   // b2: LightingParams
+		.AddRootDescriptorTable(3)  // t3: TLAS
+		.AddRootCBV(3)              // b3: LightingConstants
+		.AddRootSRV(5)              // t5: GPULight[]
+		.Build(device, /*allowInputLayout*/ false);
+
+	const ProbeGrid::Desc& probeDesc = m_probeGrid.GetDesc();
+
+	// ---- ProbeUpdate PSO ----
+	auto probeCsBlob = d3d12lite::CompileShaderSM66(
+		L"ShadersProbe.hlsl", L"ProbeUpdateCS", L"cs_6_6");
+	assert(!probeCsBlob.empty());
+
+	PipelineBuilder probeBuilder;
+	m_probePSO = probeBuilder.BuildCompute(
+		device, m_probeRootSignature.Get(), probeCsBlob);
+
+	m_probeUpdatePass.Init(
+		m_probeRootSignature.Get(), m_probePSO.Get(),
+		&m_probeGrid, m_probeGridId,
+		m_sceneGpuData.GetBindlessIndex(),
+		m_rtScene.GetTLASDescriptor());
+
+	// ---- ProbeDistance PSO ----
+	auto distCsBlob = d3d12lite::CompileShaderSM66(
+		L"ShadersProbe.hlsl", L"ProbeDistanceCS", L"cs_6_6");
+	assert(!distCsBlob.empty());
+
+	PipelineBuilder distBuilder;
+	m_probeDistancePSO = distBuilder.BuildCompute(
+		device, m_probeRootSignature.Get(), distCsBlob);
+
+	m_probeDistancePass.Init(
+		m_probeRootSignature.Get(), m_probeDistancePSO.Get(),
+		&m_probeGrid, m_probeDistanceId,
+		m_rtScene.GetTLASDescriptor());
+
+	// ---- BorderFixup PSO（两个实例共用）----
+	auto borderCsBlob = d3d12lite::CompileShaderSM66(
+		L"ShadersProbe.hlsl", L"BorderFixupCS", L"cs_6_6");
+	assert(!borderCsBlob.empty());
+
+	PipelineBuilder borderBuilder;
+	m_probeBorderPSO = borderBuilder.BuildCompute(
+		device, m_probeRootSignature.Get(), borderCsBlob);
+
+	// irradiance 的 gutter
+	m_probeBorderFixupPass.Init(
+		m_probeRootSignature.Get(), m_probeBorderPSO.Get(),
+		m_probeGridId, m_probeGrid.GetResource(),
+		probeDesc.countX, probeDesc.countY, probeDesc.countZ,
+		m_probeGrid.GetUAVIndex(), ProbeGrid::kTileStride,
+		m_probeGrid.GetAtlasWidth(), m_probeGrid.GetAtlasHeight());
+
+	// distance 的 gutter
+	m_probeDistanceBorderPass.Init(
+		m_probeRootSignature.Get(), m_probeBorderPSO.Get(),
+		m_probeDistanceId, m_probeGrid.GetDistanceResource(),
+		probeDesc.countX, probeDesc.countY, probeDesc.countZ,
+		m_probeGrid.GetDistanceUAVIndex(), ProbeGrid::kDistanceTileStride,
+		m_probeGrid.GetDistanceAtlasWidth(), m_probeGrid.GetDistanceAtlasHeight());
+
+	//==================================================================================================================
+	// ---- RenderGraph：资源注册（只注册一次，状态跨帧保留）----
+	m_gbufferAlbedoId = m_graph.RegisterResource(
+		"GBufferAlbedo", m_gbufferAlbedo.GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET);
+	m_gbufferNormalId = m_graph.RegisterResource(
+		"GBufferNormal", m_gbufferNormal.GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET);
+	m_depthId = m_graph.RegisterResource(
+		"Depth", m_depthBuffer.GetResource(), D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+	const uint32_t frameCount = m_context.GetFrameCount();
+	m_backbufferIds.resize(frameCount);
+	for (uint32_t i = 0; i < frameCount; ++i)
+	{
+		m_backbufferIds[i] = m_graph.RegisterResource(
+			"Backbuffer", m_cpuAllocator.GetBackBufferResource(i),
+			D3D12_RESOURCE_STATE_PRESENT);
+	}
+
+	// ---- Pass 初始化 ----
+	m_gbufferPass.Init(m_gbufferPSO.Get(),
+		&m_gbufferAlbedo, &m_gbufferNormal, &m_depthBuffer,
+		&m_scene, &m_meshLibrary,
+		m_gbufferAlbedoId, m_gbufferNormalId, m_depthId);
+
+	m_lightingPass.Init(m_lightingPSO.Get(),
+		&m_gbufferAlbedo, &m_gbufferNormal, &m_depthBuffer,
+		m_gbufferAlbedoId, m_gbufferNormalId, m_depthId,
+		m_depthBindlessIndex, m_sceneGpuData.GetBindlessIndex(),
+		m_rtScene.GetTLASDescriptor(),
+		m_computeTexture.GetBindlessIndex(),
+		m_probeGridId,
+		m_probeGrid.GetDesc().origin,
+		m_probeGrid.GetDesc().spacing,
+		m_probeGrid.GetDesc().countX,
+		m_probeGrid.GetDesc().countY,
+		m_probeGrid.GetDesc().countZ,
+		m_probeGrid.GetSRVIndex(),
+		m_probeDistanceId,                          // 距离矩资源 id
+		m_probeGrid.GetDistanceSRVIndex());         // 距离矩 SRV 槽
 
 }
 
@@ -168,6 +316,10 @@ void App::RenderTick() {
 	if (m_input.IsKeyDown('5')) m_debugMode = 4;   // world pos
 	if (m_input.IsKeyDown('6')) m_debugMode = 5;   // ray-tracing
 	if (m_input.IsKeyDown('7')) m_debugMode = 6;   // GI only
+	if (m_input.IsKeyDown('8')) m_debugMode = 7;   // compute 输出
+	if (m_input.IsKeyDown('9')) m_debugMode = 8;   // 探针辐照度
+	if (m_input.IsKeyDown('0')) m_debugMode = 9;   // atlas 布局
+	if (m_input.IsKeyDown('P')) m_debugMode = 10;  // 距离矩 atlas
 
 	m_context.BeginFrame();
 	m_waitMsAccum += m_context.GetLastWaitMs();
@@ -184,7 +336,6 @@ void App::RenderTick() {
 
 
 	// 1. 从 CPU 分配器获取当前后缓冲资源与 RTV,DSV 句柄
-	ID3D12Resource* backBuffer = m_cpuAllocator.GetBackBufferResource(frameIndex);
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_cpuAllocator.GetBackBufferRTV(frameIndex);
 	D3D12_CPU_DESCRIPTOR_HANDLE dsv = m_depthBuffer.GetDSV();
 
@@ -204,8 +355,20 @@ void App::RenderTick() {
 	const DirectX::XMFLOAT3 cameraPos = m_camera.GetPosition();
 	frameData.cameraPos = { cameraPos.x, cameraPos.y, cameraPos.z, 1.0f };
 	frameData.time = m_context.time;
+	frameData.frameIndex = m_frameCounter++;
 
 	D3D12_GPU_VIRTUAL_ADDRESS cbvGpuAddr = frame.frameUpload.UploadConstants(frameData);
+	// ---- 光照常量（b3）----
+	LightingConstants lightingConstants = m_lightingConstants;
+	D3D12_GPU_VIRTUAL_ADDRESS lightingCbAddr =
+		frame.frameUpload.UploadConstants(lightingConstants);
+
+	// ---- 光源数组（t5）：每帧写进 frameUpload ----
+	const uint64_t lightBytes = m_gpuLights.size() * sizeof(GPULight);
+	UploadBlock lightBlock = frame.frameUpload.Allocate(lightBytes, 256);
+	if (!m_gpuLights.empty())
+		std::memcpy(lightBlock.cpuAddress, m_gpuLights.data(), lightBytes);
+
 
 	// ---- 通用状态 ----
 	ID3D12DescriptorHeap* heaps[] = { m_gpuAllocator.GetHeap() };
@@ -219,79 +382,40 @@ void App::RenderTick() {
 	cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	cmdList->SetGraphicsRootConstantBufferView(1, cbvGpuAddr);			 //每帧常量
 
+	//Render Graph调用
+	RenderGraph::FrameContext ctx{};
+	ctx.frameIndex = m_context.GetFrameIndex();
+	ctx.cmdList = cmdList;
+	ctx.frameConstantsAddress = cbvGpuAddr;
+	ctx.lightingConstantsAddress = lightingCbAddr;
+	ctx.lightBufferAddress = lightBlock.gpuAddress;
+	ctx.lightCount = static_cast<uint32_t>(m_gpuLights.size());
+	ctx.debugMode = m_debugMode;
+	ctx.backbufferRtv = rtvHandle;
 
-	// ================= Pass 1: G-buffer =================
-	m_gbufferAlbedo.TransitionTo(cmdList, D3D12_RESOURCE_STATE_RENDER_TARGET);
-	m_gbufferNormal.TransitionTo(cmdList, D3D12_RESOURCE_STATE_RENDER_TARGET);
-	TransitionDepth(cmdList, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+	m_lightingPass.SetBackbuffer(m_backbufferIds[ctx.frameIndex]);
 
-	D3D12_CPU_DESCRIPTOR_HANDLE gbufferRtvs[2] = {
-		m_gbufferAlbedo.GetRTV(), m_gbufferNormal.GetRTV() };
-	cmdList->OMSetRenderTargets(2, gbufferRtvs, FALSE, &dsv);
+	m_graph.BeginFrame();
 
-	const float clearAlbedo[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-	const float clearNormal[4] = { 0.5f, 0.5f, 1.0f, 1.0f };
-	cmdList->ClearRenderTargetView(gbufferRtvs[0], clearAlbedo, 0, nullptr);
-	cmdList->ClearRenderTargetView(gbufferRtvs[1], clearNormal, 0, nullptr);
-	m_depthBuffer.Clear(cmdList);
+	m_graph.AddPass(m_gbufferPass);
+	m_graph.AddPass(m_computeSmokePass);
+	m_graph.AddPass(m_probeUpdatePass);
+	m_graph.AddPass(m_probeBorderFixupPass);      // irradiance gutter
+	m_graph.AddPass(m_probeDistancePass);         // 距离矩更新
+	m_graph.AddPass(m_probeDistanceBorderPass);   // 距离矩 gutter
+	m_graph.AddPass(m_lightingPass);
+	
 
-	cmdList->SetPipelineState(m_gbufferPSO.Get());
+	// 收尾：backbuffer 切回 PRESENT（空执行，只用于插屏障）
+	const RenderGraph::ResourceId backbufferId = m_backbufferIds[ctx.frameIndex];
+	m_graph.AddPass("BackbufferToPresent",
+		[backbufferId](RenderGraph::PassBuilder& builder) {
+			builder.Transition(backbufferId, D3D12_RESOURCE_STATE_PRESENT);
+		},
+		[](RenderGraph::FrameContext&) {});
 
-	for (const RenderObject& obj : m_objects) {
-		const DirectX::XMMATRIX world =
-			DirectX::XMMatrixScaling(obj.scale.x, obj.scale.y, obj.scale.z) *
-			DirectX::XMMatrixRotationRollPitchYaw(obj.rotation.x, obj.rotation.y, obj.rotation.z) *
-			DirectX::XMMatrixTranslation(obj.position.x, obj.position.y, obj.position.z);
-
-		PerObjectConstants objectData{};
-		DirectX::XMStoreFloat4x4(&objectData.world, DirectX::XMMatrixTranspose(world));
-		DirectX::XMStoreFloat4x4(&objectData.normalMatrix, DirectX::XMMatrixInverse(nullptr, world));
-
-		const Mesh& mesh = m_meshLibrary.Get(obj.meshId);
-		objectData.vbIndex = mesh.GetVBBindlessIndex();
-		objectData.textureIndex = obj.textureIndex;
-		objectData.albedo = obj.albedo;
-
-		cmdList->SetGraphicsRoot32BitConstants(0, 40, &objectData, 0);		//每物体常量
-		cmdList->IASetIndexBuffer(&mesh.GetIBV());
-		cmdList->DrawIndexedInstanced(mesh.GetIndexCount(), 1, 0, 0, 0);
-	}
-
-	// ================= 屏障：G-buffer -> SRV =================
-	m_gbufferAlbedo.TransitionTo(cmdList, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-	m_gbufferNormal.TransitionTo(cmdList, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-	TransitionDepth(cmdList, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-	D3D12_RESOURCE_BARRIER barrierBefore = d3d12lite::CreateTransitionBarrier(
-		backBuffer,
-		D3D12_RESOURCE_STATE_PRESENT,
-		D3D12_RESOURCE_STATE_RENDER_TARGET);
-	cmdList->ResourceBarrier(1, &barrierBefore);
-
-	// ================= Pass 2: Lighting =================
-	cmdList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
-	const float clearColor[4] = { 0.1f, 0.1f, 0.15f, 1.0f };
-	cmdList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
-
-	cmdList->SetPipelineState(m_lightingPSO.Get());
-
-	LightingParams lp{};
-	lp.albedoIndex = m_gbufferAlbedo.GetBindlessIndex();
-	lp.normalIndex = m_gbufferNormal.GetBindlessIndex();
-	lp.depthIndex = m_depthBindlessIndex;
-	lp.debugMode = m_debugMode;
-	lp.objectIndex = m_objectDataBindlessIndex;
-	cmdList->SetGraphicsRoot32BitConstants(2, 8, &lp, 0);
-	cmdList->SetGraphicsRootDescriptorTable(3, m_rtScene.GetTLASDescriptor());
-	cmdList->DrawInstanced(3, 1, 0, 0);
-
-	// ================= 收尾 =================
-	D3D12_RESOURCE_BARRIER barrierAfter = d3d12lite::CreateTransitionBarrier(
-		backBuffer,
-		D3D12_RESOURCE_STATE_RENDER_TARGET,
-		D3D12_RESOURCE_STATE_PRESENT);
-	cmdList->ResourceBarrier(1, &barrierAfter);
-
+	m_graph.Execute(ctx);
+	
 	//=================================================================================================================================
 	auto recordEnd = std::chrono::high_resolution_clock::now();
 	const float recordMs = std::chrono::duration<float, std::milli>(recordEnd - recordStart).count();
@@ -304,6 +428,8 @@ void App::RenderTick() {
 	m_tickCpuMsAccum += std::chrono::duration<float, std::milli>(tickEnd - tickStart).count();
 	m_executeMsAccum += m_context.GetLastExecuteMs();
 	m_presentMsAccum += m_context.GetLastPresentMs();
+
+
 
 }
 
@@ -345,7 +471,7 @@ void App::UpdateFrameStats(float deltaTime) {
 			avgExecuteMs,                            // 8  Execute
 			avgPresentMs,                            // 9  Present
 			avgTickMs,                               // 10 TickCPU
-			static_cast<unsigned>(m_objects.size()), // 11 Objects
+			static_cast<unsigned>(m_scene.GetObjects().size()), // 11 Objects
 			m_context.GetFrame().frameUpload.IsUsingGpuUploadHeap()
 			? L"GPU_UPLOAD (ReBAR)" : L"UPLOAD (SysRAM)"); // 12 Heap
 
@@ -375,110 +501,44 @@ CameraControl App::BuildCameraControl() const {
 	return c;
 }
 
-// 量测用：14 / 100 / 1000 / 5000 切换
-constexpr uint32_t kTestObjectCount = 10000;
 
-void App::BuildScene() {
-	m_objects.clear();
 
-	auto addObject = [this](const DirectX::XMFLOAT3& pos, const DirectX::XMFLOAT3& scale,
-		uint32_t meshId, const DirectX::XMFLOAT4& albedo) {
-			RenderObject obj{};
-			obj.position = pos;
-			obj.scale = scale;
-			obj.rotation = { 0.0f, 0.0f, 0.0f };
-			obj.meshId = meshId;
-			obj.textureIndex = m_textureIndex;
-			obj.albedo = albedo;
-			m_objects.push_back(obj);
-		};
+void App::BuildLights()
+{
+	const std::vector<Light>& lights = m_scene.GetLights();
 
-	const DirectX::XMFLOAT4 white{ 0.80f, 0.80f, 0.80f, 1.0f };
-	const DirectX::XMFLOAT4 red{ 0.85f, 0.10f, 0.10f, 1.0f };
-	const DirectX::XMFLOAT4 green{ 0.10f, 0.75f, 0.10f, 1.0f };
-	const DirectX::XMFLOAT4 orange{ 0.95f, 0.55f, 0.15f, 1.0f };
+	m_gpuLights.clear();
+	m_gpuLights.reserve(lights.size());
 
-	// 房间：宽 5(x)、高 2.5(y)、深 5(z)，正面(z=-2.5)敞开
-	// 用薄 cube 当墙，避免平面朝向/背面剔除问题
-	addObject({ 0.0f, -0.05f, 0.0f }, { 5.0f, 0.1f, 5.0f }, m_cubeMeshId, white);  // 地板
-	addObject({ 0.0f,  2.55f, 0.0f }, { 5.0f, 0.1f, 5.0f }, m_cubeMeshId, white);  // 天花板
-	addObject({ 0.0f,  1.25f, 2.55f }, { 5.0f, 2.6f, 0.1f }, m_cubeMeshId, white); // 后墙
-	addObject({ -2.55f, 1.25f, 0.0f }, { 0.1f, 2.6f, 5.0f }, m_cubeMeshId, red);   // 左墙
-	addObject({ 2.55f, 1.25f, 0.0f }, { 0.1f, 2.6f, 5.0f }, m_cubeMeshId, green); // 右墙
+	for (const Light& l : lights) {
+		GPULight g{};
+		g.positionType = { l.position.x, l.position.y, l.position.z,
+						   static_cast<float>(l.type) };
 
-	// 两个球
-	addObject({ -0.8f, 0.70f, -0.6f }, { 1.0f, 1.0f, 1.0f }, m_sphereMeshId, white);
-	addObject({ 0.9f, 0.46f,  0.3f }, { 0.65f, 0.65f, 0.65f }, m_sphereMeshId, orange);
-}
+		// 方向统一归一化
+		DirectX::XMFLOAT3 dir = l.direction;
+		const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+		if (len > 1e-6f) { dir.x /= len; dir.y /= len; dir.z /= len; }
+		g.directionRange = { dir.x, dir.y, dir.z, l.range };
 
-//也可以用UPLOAD_GPU优化
-void App::BuildInstances() {
-	// ---- 每个实例的 GPU 数据（UPLOAD 堆，一次写入，常驻）----
-	ID3D12Device* device = m_context.GetDevice();
-	std::vector<GPUObjectData> gpuObjects(m_objects.size());
-	for (size_t i = 0; i < m_objects.size(); ++i) {
-		const RenderObject& obj = m_objects[i];
-		const DirectX::XMMATRIX world =
-			DirectX::XMMatrixScaling(obj.scale.x, obj.scale.y, obj.scale.z) *
-			DirectX::XMMatrixRotationRollPitchYaw(obj.rotation.x, obj.rotation.y, obj.rotation.z) *
-			DirectX::XMMatrixTranslation(obj.position.x, obj.position.y, obj.position.z);
+		g.colorIntensity = { l.color.x, l.color.y, l.color.z, l.intensity };
 
-		GPUObjectData& o = gpuObjects[i];
-		DirectX::XMStoreFloat4x4(&o.world, DirectX::XMMatrixTranspose(world));
-		DirectX::XMStoreFloat4x4(&o.normalMatrix, DirectX::XMMatrixInverse(nullptr, world));
-		o.albedo = obj.albedo;
+		const float cosOuter = std::cos(l.outerCone);
+		const float cosInner = std::cos(l.innerCone);
+		g.coneParams = { cosOuter, cosInner, 0.0f, 0.0f };
 
-		const Mesh& mesh = m_meshLibrary.Get(obj.meshId);
-		o.vbIndex = mesh.GetVBBindlessIndex();
-		o.ibIndex = mesh.GetIBBindlessIndex();
-		o.indexCount = mesh.GetIndexCount();
-		o.padding = 0;
+		m_gpuLights.push_back(g);
 	}
 
-	const uint64_t objBytes = gpuObjects.size() * sizeof(GPUObjectData);
-	D3D12_RESOURCE_DESC objDesc{};
-	objDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-	objDesc.Width = objBytes;
-	objDesc.Height = 1;
-	objDesc.DepthOrArraySize = 1;
-	objDesc.MipLevels = 1;
-	objDesc.Format = DXGI_FORMAT_UNKNOWN;
-	objDesc.SampleDesc = { 1, 0 };
-	objDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-	D3D12_HEAP_PROPERTIES uploadProps{};
-	uploadProps.Type = D3D12_HEAP_TYPE_GPU_UPLOAD;
-	THROW_IF_FAILED(device->CreateCommittedResource(
-		&uploadProps, D3D12_HEAP_FLAG_NONE, &objDesc,
-		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-		IID_PPV_ARGS(&m_objectDataBuffer)));
-
-	void* mapped = nullptr;
-	THROW_IF_FAILED(m_objectDataBuffer->Map(0, nullptr, &mapped));
-	std::memcpy(mapped, gpuObjects.data(), objBytes);
-	m_objectDataBuffer->Unmap(0, nullptr);
-
-	// SRV 进 bindless 堆
-	{
-		GPUDescriptorHandle handle = m_gpuAllocator.Allocate();
-		m_objectDataBindlessIndex = handle.index;
-
-		D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-		srv.Format = DXGI_FORMAT_UNKNOWN;
-		srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		srv.Buffer.FirstElement = 0;
-		srv.Buffer.NumElements = static_cast<UINT>(gpuObjects.size());
-		srv.Buffer.StructureByteStride = sizeof(GPUObjectData);
-		device->CreateShaderResourceView(m_objectDataBuffer.Get(), &srv, handle.cpuHandle);
+	// 主方向光 → LightingConstants（太阳/天空/环境）
+	m_lightingConstants = {};
+	for (const Light& l : lights) {
+		if (l.type == LightType::Directional) {
+			m_lightingConstants.sunDirection = { l.direction.x, l.direction.y, l.direction.z, l.intensity };
+			m_lightingConstants.sunColor = { l.color.x, l.color.y, l.color.z, 1.0f };
+			break;
+		}
 	}
-}
-
-void App::TransitionDepth(ID3D12GraphicsCommandList* cmdList, D3D12_RESOURCE_STATES target) {
-	if (m_depthState == target) return;
-
-	D3D12_RESOURCE_BARRIER barrier = d3d12lite::CreateTransitionBarrier(
-		m_depthBuffer.GetResource(), m_depthState, target);
-	cmdList->ResourceBarrier(1, &barrier);
-	m_depthState = target;
+	m_lightingConstants.skyColor = { 0.2f, 0.3f, 0.5f, 1.0f };
+	m_lightingConstants.ambient = { 0.05f, 0.05f, 0.05f, 1.0f };
 }

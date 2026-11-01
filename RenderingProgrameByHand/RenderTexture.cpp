@@ -66,3 +66,50 @@ void RenderTexture::TransitionTo(ID3D12GraphicsCommandList* cmdList, D3D12_RESOU
     cmdList->ResourceBarrier(1, &barrier);
     m_state = target;
 }
+
+//=====================================================================================================
+//UAV相关
+void RenderTexture::InitUAV(ID3D12Device* device,
+    GPUDescriptorAllocator& bindlessAllocator,
+    uint32_t width, uint32_t height,
+    DXGI_FORMAT format)
+{
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = width;
+    desc.Height = height;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = format;
+    desc.SampleDesc = { 1, 0 };
+    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+    D3D12_HEAP_PROPERTIES props{};
+    props.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    THROW_IF_FAILED(device->CreateCommittedResource(
+        &props, D3D12_HEAP_FLAG_NONE, &desc,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+        IID_PPV_ARGS(&m_resource)));
+    m_state = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+
+    // SRV（给 lighting 采样）
+    GPUDescriptorHandle srv = bindlessAllocator.Allocate();
+    m_bindlessIndex = srv.index;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.Format = format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture2D.MipLevels = 1;
+    device->CreateShaderResourceView(m_resource.Get(), &srvDesc, srv.cpuHandle);
+
+    // UAV（给 compute 写）
+    GPUDescriptorHandle uav = bindlessAllocator.Allocate();
+    m_uavBindlessIndex = uav.index;
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+    uavDesc.Format = format;
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    uavDesc.Texture2D.MipSlice = 0;
+    device->CreateUnorderedAccessView(m_resource.Get(), nullptr, &uavDesc, uav.cpuHandle);
+}

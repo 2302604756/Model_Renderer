@@ -36,6 +36,8 @@ public:
 
     }
 
+
+
     PipelineBuilder& SetRootSignature(ID3D12RootSignature* rs) {
         m_desc.pRootSignature = rs;
         return *this;
@@ -70,6 +72,20 @@ public:
     ComPtr<ID3D12PipelineState> Build(ID3D12Device* device) {
         ComPtr<ID3D12PipelineState> pso;
         THROW_IF_FAILED(device->CreateGraphicsPipelineState(&m_desc, IID_PPV_ARGS(&pso)));
+        return pso;
+    }
+
+    ComPtr<ID3D12PipelineState> BuildCompute(
+        ID3D12Device* device,
+        ID3D12RootSignature* rootSignature,
+        const std::vector<uint8_t>& cs)
+    {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
+        desc.pRootSignature = rootSignature;
+        desc.CS = { cs.data(), cs.size() };
+
+        ComPtr<ID3D12PipelineState> pso;
+        THROW_IF_FAILED(device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pso)));
         return pso;
     }
 
