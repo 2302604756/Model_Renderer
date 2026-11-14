@@ -16,7 +16,7 @@ struct GPUObjectData {
 	uint32_t            vbIndex;      // 144 bindless VB 槽
 	uint32_t            ibIndex;      // 148 bindless IB 槽
 	uint32_t            indexCount;   // 152
-	uint32_t            padding;      // 156
+	uint32_t		    volumeMask;	  // 物体对应的Volume Mask
 };
 static_assert(sizeof(GPUObjectData) == 160,
 	"GPUObjectData 必须和 HLSL 布局一致");

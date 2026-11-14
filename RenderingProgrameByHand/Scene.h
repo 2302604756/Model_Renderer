@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <vector>
 #include "SceneTypes.h"
+#include "ProbeVolume.h"
 
 // 场景内容（CPU 侧）：物体 + 光源。只负责"描述场景"，不持有 GPU 资源。
 class Scene {
@@ -11,8 +12,11 @@ public:
 
 	const std::vector<RenderObject>& GetObjects() const noexcept { return m_objects; }
 	const std::vector<Light>& GetLights()  const noexcept { return m_lights; }
+	std::vector<RenderObject>& GetMutableObjects() noexcept { return m_objects; }
+	const std::vector<ProbeVolume>& GetProbeVolumes() const noexcept{ return m_probeVolumes; }
 
 private:
 	std::vector<RenderObject> m_objects;
-	std::vector<Light>        m_lights;   // 阶段 3 光源系统使用
+	std::vector<Light>        m_lights;		  // 阶段 3 光源系统使用
+	std::vector<ProbeVolume>  m_probeVolumes; // ProbeVolume 
 };

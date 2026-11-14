@@ -32,8 +32,12 @@ struct LightingConstants {
 	DirectX::XMFLOAT4 sunColor;     // rgb, w = 1
 	DirectX::XMFLOAT4 skyColor;     // 天空 / 环境色
 	DirectX::XMFLOAT4 ambient;      // 环境光
+	uint32_t volumeMaskIndex;
+	uint32_t probeMaskIndex;
+	uint32_t probeDataUavIndex; // Probe relocation offset UAV
+	uint32_t padding;
 };
-static_assert(sizeof(LightingConstants) == 64);
+static_assert(sizeof(LightingConstants) == 80);
 
 // 光源数组的 GPU 布局：计划 t5 root SRV（阶段 3 接线，当前未使用）
 // HLSL 对应结构尚未定义

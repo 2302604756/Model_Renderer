@@ -6,6 +6,44 @@
 #include <stdexcept>
 
 
+namespace rt {
+    std::vector<D3D12_RAYTRACING_INSTANCE_DESC> BuildInstanceDescs(
+        const std::vector<RenderObject>& objects,
+        const std::vector<AccelerationStructure>& blas)
+    {
+        std::vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
+        instances.reserve(objects.size());
+
+        for (UINT i = 0; i < static_cast<UINT>(objects.size()); ++i)
+        {
+            const RenderObject& obj = objects[i];
+
+            const DirectX::XMMATRIX world =
+                DirectX::XMMatrixScaling(obj.scale.x, obj.scale.y, obj.scale.z) *
+                DirectX::XMMatrixRotationRollPitchYaw(obj.rotation.x, obj.rotation.y, obj.rotation.z) *
+                DirectX::XMMatrixTranslation(obj.position.x, obj.position.y, obj.position.z);
+
+            DirectX::XMFLOAT4X4 t;
+            DirectX::XMStoreFloat4x4(&t, DirectX::XMMatrixTranspose(world));
+
+            D3D12_RAYTRACING_INSTANCE_DESC inst{};
+            inst.Transform[0][0] = t._11; inst.Transform[0][1] = t._12; inst.Transform[0][2] = t._13; inst.Transform[0][3] = t._14;
+            inst.Transform[1][0] = t._21; inst.Transform[1][1] = t._22; inst.Transform[1][2] = t._23; inst.Transform[1][3] = t._24;
+            inst.Transform[2][0] = t._31; inst.Transform[2][1] = t._32; inst.Transform[2][2] = t._33; inst.Transform[2][3] = t._34;
+
+            inst.InstanceID = i;
+            inst.InstanceMask = 0xFF;
+            inst.InstanceContributionToHitGroupIndex = 0;
+            inst.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
+            inst.AccelerationStructure = blas[obj.meshId].gpuAddress;
+
+            instances.push_back(inst);
+        }
+
+        return instances;
+    }
+}
+
 
 namespace rt {
 	namespace {
@@ -161,8 +199,7 @@ namespace rt {
         THROW_IF_FAILED(device->QueryInterface(IID_PPV_ARGS(&device5)));
         ComPtr<ID3D12GraphicsCommandList4> cmdList4;
         THROW_IF_FAILED(cmdList->QueryInterface(IID_PPV_ARGS(&cmdList4)));
-
-        // 每个 mesh 一个 BLAS
+        // 每个 mesh 一个 BLAS（只建一次）
         m_blas.resize(meshLibrary.Count());
         for (uint32_t i = 0; i < meshLibrary.Count(); ++i) {
             const Mesh& mesh = meshLibrary.Get(i);
@@ -171,54 +208,90 @@ namespace rt {
                 mesh.GetIndexBuffer(), mesh.GetIndexCount());
         }
 
-        // 每个物体一个实例
-        std::vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
-        instances.reserve(objects.size());
-        for (const RenderObject& obj : objects) {
-            const DirectX::XMMATRIX world =
-                DirectX::XMMatrixScaling(obj.scale.x, obj.scale.y, obj.scale.z) *
-                DirectX::XMMatrixRotationRollPitchYaw(obj.rotation.x, obj.rotation.y, obj.rotation.z) *
-                DirectX::XMMatrixTranslation(obj.position.x, obj.position.y, obj.position.z);
+        m_instanceCapacity = static_cast<uint32_t>(objects.size());
 
-            // DXR 的 3x4 是 row-major、列向量约定，等于 DirectXMath 世界矩阵的转置
-            DirectX::XMFLOAT4X4 t;
-            DirectX::XMStoreFloat4x4(&t, DirectX::XMMatrixTranspose(world));
+        // 3 帧 TLAS 初始数据
+        const auto instances = BuildInstanceDescs(objects, m_blas);
 
-            D3D12_RAYTRACING_INSTANCE_DESC inst{};
-            inst.Transform[0][0] = t._11; inst.Transform[0][1] = t._12; inst.Transform[0][2] = t._13; inst.Transform[0][3] = t._14;
-            inst.Transform[1][0] = t._21; inst.Transform[1][1] = t._22; inst.Transform[1][2] = t._23; inst.Transform[1][3] = t._24;
-            inst.Transform[2][0] = t._31; inst.Transform[2][1] = t._32; inst.Transform[2][2] = t._33; inst.Transform[2][3] = t._34;
-
-            inst.InstanceID = static_cast<UINT>(instances.size());
-            inst.InstanceMask = 0xFF;
-            inst.InstanceContributionToHitGroupIndex = 0;
-            inst.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
-            inst.AccelerationStructure = m_blas[obj.meshId].gpuAddress;
-
-            instances.push_back(inst);
+        for (uint32_t i = 0; i < kFrameCount; ++i)
+        {
+            m_tlasFrames[i].tlas =
+                BuildTLASImpl(device5.Get(), cmdList4.Get(), instances);
         }
-
-        m_tlas = BuildTLASImpl(device5.Get(), cmdList4.Get(), instances);
     }
 
     void AccelerationScene::ReleaseBuildScratch()
     {
+        // BLAS 不再更新，可以释放 scratch
         for (auto& blas : m_blas) blas.ReleaseScratch();
-        m_tlas.ReleaseScratch();
+        // TLAS 每帧重建，scratch 和 instanceDescs 必须保留
+        //m_tlas.ReleaseScratch();
     }
 
     void AccelerationScene::CreateTLASDescriptor(ID3D12Device* device, GPUDescriptorAllocator& bindless)
     {
-        GPUDescriptorHandle tlasSrv = bindless.Allocate();
-        m_tlasSrvGpu = tlasSrv.gpuHandle;
+        for (uint32_t i = 0; i < kFrameCount; ++i)
+        {
+            GPUDescriptorHandle handle = bindless.Allocate();
+            m_tlasFrames[i].srv = handle.gpuHandle;
 
-        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-        srv.Format = DXGI_FORMAT_UNKNOWN;
-        srv.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
-        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        srv.RaytracingAccelerationStructure.Location = m_tlas.gpuAddress;//为 TLAS 创建一个着色器资源视图（SRV）描述符
-        //把构建好的 TLAS（场景加速结构）暴露给 GPU 里的 Shader
-        device->CreateShaderResourceView(nullptr, &srv, tlasSrv.cpuHandle);
+            D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+            srv.Format = DXGI_FORMAT_UNKNOWN;
+            srv.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
+            srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srv.RaytracingAccelerationStructure.Location =
+                m_tlasFrames[i].tlas.gpuAddress;
+
+            device->CreateShaderResourceView(nullptr, &srv, handle.cpuHandle);
+        }
     }
+
+
+    // 更新TLAS
+    void AccelerationScene::UpdateTLAS(ID3D12GraphicsCommandList* cmdList,
+        const std::vector<RenderObject>& objects,
+        uint32_t frameIndex)
+    {
+        TLASFrame& frame = m_tlasFrames[frameIndex % kFrameCount];
+
+        if (!frame.tlas.resource || !frame.tlas.instanceDescs || !frame.tlas.scratch)
+            return;
+
+        // 阶段 2 固定实例数；超过初始容量要重建 TLAS
+        if (objects.size() > m_instanceCapacity)
+            return;
+
+        ComPtr<ID3D12GraphicsCommandList4> cmdList4;
+        THROW_IF_FAILED(cmdList->QueryInterface(IID_PPV_ARGS(&cmdList4)));
+
+        // 1. 只写当前帧的 instance buffer
+        const auto instances = BuildInstanceDescs(objects, m_blas);
+        const uint64_t bytes =
+            static_cast<uint64_t>(instances.size()) * sizeof(D3D12_RAYTRACING_INSTANCE_DESC);
+
+        void* mapped = nullptr;
+        THROW_IF_FAILED(frame.tlas.instanceDescs->Map(0, nullptr, &mapped));
+        std::memcpy(mapped, instances.data(), bytes);
+        frame.tlas.instanceDescs->Unmap(0, nullptr);
+
+        // 2. 只重建当前帧的 TLAS
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
+        inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+        inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+        inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+        inputs.NumDescs = static_cast<UINT>(instances.size());
+        inputs.InstanceDescs = frame.tlas.instanceDescs->GetGPUVirtualAddress();
+
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
+        build.Inputs = inputs;
+        build.ScratchAccelerationStructureData = frame.tlas.scratch->GetGPUVirtualAddress();
+        build.DestAccelerationStructureData = frame.tlas.resource->GetGPUVirtualAddress();
+
+        cmdList4->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
+
+        // 3. 后续光追 pass 才能读到新 TLAS
+        InsertUavBarrier(cmdList4.Get(), frame.tlas.resource.Get());
+    }
+
 
 } // namespace rt

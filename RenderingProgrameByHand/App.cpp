@@ -35,10 +35,12 @@ void App::init(HWND hwnd) {
 	const float clearAlbedo[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 	m_gbufferAlbedo.Init(device, m_cpuAllocator, m_gpuAllocator,
 		1920, 1080, DXGI_FORMAT_R8G8B8A8_UNORM, clearAlbedo);
-
 	const float clearNormal[4] = { 0.5f, 0.5f, 1.0f, 1.0f };
 	m_gbufferNormal.Init(device, m_cpuAllocator, m_gpuAllocator,
 		1920, 1080, DXGI_FORMAT_R16G16B16A16_FLOAT, clearNormal);
+	const float clearVolumeMask[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	m_gbufferVolumeMask.Init(device, m_cpuAllocator, m_gpuAllocator,
+		1920, 1080, DXGI_FORMAT_R32_UINT, clearVolumeMask);
 
 	// depth 的 SRV：延迟光照里重建世界坐标用（D32_FLOAT -> R32_FLOAT）
 	{
@@ -81,6 +83,9 @@ void App::init(HWND hwnd) {
 
 	// ① 场景先建好：TLAS 的实例数据来自 m_objects
 	m_scene.Build(m_cubeMeshId, m_sphereMeshId, m_textureIndex);
+	// Build 里固定顺序：6 = 小球，2 = 后墙
+	m_demoController.Init(&m_scene, 6, 5);
+	m_tlasUpdatePass.Init(&m_rtScene, &m_scene);
 	BuildLights();                       
 	m_sceneGpuData.Build(device, m_gpuAllocator, m_meshLibrary, m_scene);
 	// ② 录制 BLAS/TLAS 构建命令（和上面的拷贝命令共用同一条命令列表）
@@ -106,7 +111,7 @@ void App::init(HWND hwnd) {
 	m_rootSignature = RootSignatureBuilder()
 		.Add32BitConstants(40, 0)    // Root Parameter [0] -> register(b0): Push Constants    索引
 		.AddRootCBV(1)               // Root Parameter [1] -> register(b1): 逐帧瞬态 CBV	  传入Constant Buffer
-		.Add32BitConstants(16, 2)    // [2] b2 lighting 参数（16 DWORD）
+		.Add32BitConstants(16, 2)    // [2] b2 lighting 参数（18 DWORD）
 		.AddRootDescriptorTable(3)   // [3] t3 TLAS
 		.AddRootCBV(3)               // [4] b3 光照常量
 		.AddRootSRV(5)               // [5] t5 光源数组
@@ -123,16 +128,17 @@ void App::init(HWND hwnd) {
 		&& !lightingVsBlob.empty() && !lightingPsBlob.empty());
 
 	// PSO 1：G-buffer（2 个 RTV + 深度）
-	const DXGI_FORMAT gbufferFormats[2] = {
+	const DXGI_FORMAT gbufferFormats[3] = {
 		DXGI_FORMAT_R8G8B8A8_UNORM,          // albedo
-		DXGI_FORMAT_R16G16B16A16_FLOAT       // world normal
+		DXGI_FORMAT_R16G16B16A16_FLOAT,       // world normal
+		DXGI_FORMAT_R32_UINT
 	};
 
 	PipelineBuilder gbufferBuilder;
 	m_gbufferPSO = gbufferBuilder
 		.SetRootSignature(m_rootSignature.Get())
 		.SetShaders(vsObjectBlob, gbufferPsBlob)
-		.SetRTVFormats(gbufferFormats, 2)
+		.SetRTVFormats(gbufferFormats, 3)
 		.SetDepthFormat(DepthBuffer::kFormat)
 		.Build(device);
 
@@ -177,6 +183,7 @@ void App::init(HWND hwnd) {
 	//======================================================================================================================================
 		// ---- DDGI 探针网格 ----
 	m_probeGrid.Init(device, m_gpuAllocator, ProbeGrid::Desc{});
+	m_probeGrid.BuildMasks(device, m_gpuAllocator, m_scene.GetProbeVolumes());
 	m_probeGridId = m_graph.RegisterResource(
 		"ProbeGrid", m_probeGrid.GetResource(),
 		D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -189,7 +196,7 @@ void App::init(HWND hwnd) {
 	// ---- probe compute 根签名 ----
 	m_probeRootSignature = RootSignatureBuilder()
 		.Add32BitConstants(16, 4)   // b4: ProbeUpdateParams
-		.Add32BitConstants(16, 2)   // b2: LightingParams
+		.Add32BitConstants(16, 2)   // b2 LightingParams（18 DWORD）
 		.AddRootDescriptorTable(3)  // t3: TLAS
 		.AddRootCBV(3)              // b3: LightingConstants
 		.AddRootSRV(5)              // t5: GPULight[]
@@ -197,34 +204,70 @@ void App::init(HWND hwnd) {
 
 	const ProbeGrid::Desc& probeDesc = m_probeGrid.GetDesc();
 
+	// ---- ProbeRayBuffer ----
+	m_probeRayBuffer.Init(device, m_gpuAllocator,
+		probeDesc.GetProbeCount()* ProbeRayBuffer::kRayCount);
+
+	m_probeRayBufferId = m_graph.RegisterResource(
+		"ProbeRayBuffer", m_probeRayBuffer.GetResource(),
+		D3D12_RESOURCE_STATE_COMMON);
+
+	// ProbeRay PSO
+	auto rayCsBlob = d3d12lite::CompileShaderSM66(
+		L"ShadersProbe.hlsl", L"ProbeRayCS", L"cs_6_6");
+	assert(!rayCsBlob.empty());
+
+	PipelineBuilder rayBuilder;
+	m_probeRayPSO = rayBuilder.BuildCompute(
+		device, m_probeRootSignature.Get(), rayCsBlob);
+
+	m_probeRayPass.Init(
+		m_probeRootSignature.Get(), m_probeRayPSO.Get(),
+		&m_probeGrid, &m_probeRayBuffer, m_probeRayBufferId);
+
+	// ProbeRayShade PSO
+	auto shadeCsBlob = d3d12lite::CompileShaderSM66(
+		L"ShadersProbe.hlsl", L"ProbeRayShadeCS", L"cs_6_6");
+	assert(!shadeCsBlob.empty());
+
+	PipelineBuilder shadeBuilder;
+	m_probeRayShadePSO = shadeBuilder.BuildCompute(
+		device, m_probeRootSignature.Get(), shadeCsBlob);
+
+	m_probeRayShadePass.Init(
+		m_probeRootSignature.Get(), m_probeRayShadePSO.Get(),
+		&m_probeGrid, &m_probeRayBuffer, m_probeRayBufferId);
+
 	// ---- ProbeUpdate PSO ----
 	auto probeCsBlob = d3d12lite::CompileShaderSM66(
-		L"ShadersProbe.hlsl", L"ProbeUpdateCS", L"cs_6_6");
+		L"ShadersProbe.hlsl", L"ProbeTexelUpdateCS", L"cs_6_6");
 	assert(!probeCsBlob.empty());
 
 	PipelineBuilder probeBuilder;
 	m_probePSO = probeBuilder.BuildCompute(
 		device, m_probeRootSignature.Get(), probeCsBlob);
 
-	m_probeUpdatePass.Init(
-		m_probeRootSignature.Get(), m_probePSO.Get(),
-		&m_probeGrid, m_probeGridId,
-		m_sceneGpuData.GetBindlessIndex(),
-		m_rtScene.GetTLASDescriptor());
-
 	// ---- ProbeDistance PSO ----
 	auto distCsBlob = d3d12lite::CompileShaderSM66(
-		L"ShadersProbe.hlsl", L"ProbeDistanceCS", L"cs_6_6");
+		L"ShadersProbe.hlsl", L"ProbeDistanceMomentsCS", L"cs_6_6");
 	assert(!distCsBlob.empty());
 
 	PipelineBuilder distBuilder;
 	m_probeDistancePSO = distBuilder.BuildCompute(
 		device, m_probeRootSignature.Get(), distCsBlob);
 
+	m_probeUpdatePass.Init(
+		m_probeRootSignature.Get(), m_probePSO.Get(),
+		&m_probeGrid, &m_probeRayBuffer,
+		m_probeGridId, m_probeRayBufferId);
+
 	m_probeDistancePass.Init(
 		m_probeRootSignature.Get(), m_probeDistancePSO.Get(),
-		&m_probeGrid, m_probeDistanceId,
-		m_rtScene.GetTLASDescriptor());
+		&m_probeGrid, &m_probeRayBuffer,
+		m_probeDistanceId, m_probeRayBufferId);
+
+
+
 
 	// ---- BorderFixup PSO（两个实例共用）----
 	auto borderCsBlob = d3d12lite::CompileShaderSM66(
@@ -251,6 +294,35 @@ void App::init(HWND hwnd) {
 		m_probeGrid.GetDistanceUAVIndex(), ProbeGrid::kDistanceTileStride,
 		m_probeGrid.GetDistanceAtlasWidth(), m_probeGrid.GetDistanceAtlasHeight());
 
+	// ---- ProbeFixupCS PSO -----
+	auto fixupCsBlob = d3d12lite::CompileShaderSM66(
+		L"ShadersProbe.hlsl", L"ProbeFixupCS", L"cs_6_6");
+
+	m_probeFixupPSO = PipelineBuilder().BuildCompute(
+		device, m_probeRootSignature.Get(), fixupCsBlob);
+
+	m_probeFixupPass.Init(
+		m_probeRootSignature.Get(),
+		m_probeFixupPSO.Get(),
+		&m_probeGrid,
+		m_probeGridId,
+		m_probeDistanceId);
+
+	// ---- ProbeRelocation PSO（帧末更新下帧使用的探针偏移）----
+	auto relocCsBlob = d3d12lite::CompileShaderSM66(
+		L"ShadersProbe.hlsl", L"ProbeRelocationCS", L"cs_6_6");
+	assert(!relocCsBlob.empty());
+
+	m_probeRelocationPSO = PipelineBuilder().BuildCompute(
+		device, m_probeRootSignature.Get(), relocCsBlob);
+
+	m_probeRelocationPass.Init(
+		m_probeRootSignature.Get(),
+		m_probeRelocationPSO.Get(),
+		&m_probeGrid,
+		&m_probeRayBuffer,
+		m_probeRayBufferId);
+
 	//==================================================================================================================
 	// ---- RenderGraph：资源注册（只注册一次，状态跨帧保留）----
 	m_gbufferAlbedoId = m_graph.RegisterResource(
@@ -259,6 +331,8 @@ void App::init(HWND hwnd) {
 		"GBufferNormal", m_gbufferNormal.GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET);
 	m_depthId = m_graph.RegisterResource(
 		"Depth", m_depthBuffer.GetResource(), D3D12_RESOURCE_STATE_DEPTH_WRITE);
+	m_gbufferVolumeMaskId = m_graph.RegisterResource(
+		"GBufferVolumeMask",m_gbufferVolumeMask.GetResource(),D3D12_RESOURCE_STATE_RENDER_TARGET);
 
 	const uint32_t frameCount = m_context.GetFrameCount();
 	m_backbufferIds.resize(frameCount);
@@ -273,13 +347,14 @@ void App::init(HWND hwnd) {
 	m_gbufferPass.Init(m_gbufferPSO.Get(),
 		&m_gbufferAlbedo, &m_gbufferNormal, &m_depthBuffer,
 		&m_scene, &m_meshLibrary,
-		m_gbufferAlbedoId, m_gbufferNormalId, m_depthId);
+		&m_gbufferVolumeMask,
+		m_gbufferAlbedoId, m_gbufferNormalId, m_depthId,
+		m_gbufferVolumeMaskId);
 
 	m_lightingPass.Init(m_lightingPSO.Get(),
 		&m_gbufferAlbedo, &m_gbufferNormal, &m_depthBuffer,
 		m_gbufferAlbedoId, m_gbufferNormalId, m_depthId,
-		m_depthBindlessIndex, m_sceneGpuData.GetBindlessIndex(),
-		m_rtScene.GetTLASDescriptor(),
+		m_depthBindlessIndex,
 		m_computeTexture.GetBindlessIndex(),
 		m_probeGridId,
 		m_probeGrid.GetDesc().origin,
@@ -289,7 +364,10 @@ void App::init(HWND hwnd) {
 		m_probeGrid.GetDesc().countZ,
 		m_probeGrid.GetSRVIndex(),
 		m_probeDistanceId,                          // 距离矩资源 id
-		m_probeGrid.GetDistanceSRVIndex());         // 距离矩 SRV 槽
+		m_probeGrid.GetDistanceSRVIndex(),			// 距离矩 SRV 槽
+		m_gbufferVolumeMaskId,
+		m_gbufferVolumeMask.GetBindlessIndex(),
+		m_probeGrid.GetMaskSRVIndex());         
 
 }
 
@@ -309,22 +387,31 @@ void App::RenderTick() {
 
 	//用于切换视图
 	//我们通过修改传入shader的参数来控制输出内容来验证延迟渲染的执行正确性
-	if (m_input.IsKeyDown('1')) m_debugMode = 0;
-	if (m_input.IsKeyDown('2')) m_debugMode = 1;   // albedo
-	if (m_input.IsKeyDown('3')) m_debugMode = 2;   // normal
-	if (m_input.IsKeyDown('4')) m_debugMode = 3;   // depth
-	if (m_input.IsKeyDown('5')) m_debugMode = 4;   // world pos
-	if (m_input.IsKeyDown('6')) m_debugMode = 5;   // ray-tracing
-	if (m_input.IsKeyDown('7')) m_debugMode = 6;   // GI only
-	if (m_input.IsKeyDown('8')) m_debugMode = 7;   // compute 输出
+	if (m_input.IsKeyDown('1')) m_debugMode = 0;   // final DDGI
+	if (m_input.IsKeyDown('2')) m_debugMode = 16;  // final RT GI
+	if (m_input.IsKeyDown('3')) m_debugMode = 17;  // DDGI only
+	if (m_input.IsKeyDown('4')) m_debugMode = 18;  // RT GI only
+	if (m_input.IsKeyDown('N')) m_debugMode = 2;   // normal
+	if (m_input.IsKeyDown('5')) m_debugMode = 11;  // 有效探针数
+	if (m_input.IsKeyDown('6')) m_debugMode = 12;  // Chebyshev 可见性
+	if (m_input.IsKeyDown('7')) m_debugMode = 13;  // 总权重
+	if (m_input.IsKeyDown('8')) m_debugMode = 14;  // 主导探针
 	if (m_input.IsKeyDown('9')) m_debugMode = 8;   // 探针辐照度
 	if (m_input.IsKeyDown('0')) m_debugMode = 9;   // atlas 布局
 	if (m_input.IsKeyDown('P')) m_debugMode = 10;  // 距离矩 atlas
+	if (m_input.IsKeyDown('T')) m_debugMode = 15;  // 
+	if (m_input.IsKeyDown('V')) m_debugMode = 19;   // 探针位置
+	if (m_input.IsKeyDown('R')) m_probeRelocationPass.Reset();	// 重新收敛探针位置
 
+	// 先 BeginFrame：它会等待当前帧槽位 3 帧前的 fence
 	m_context.BeginFrame();
 	m_waitMsAccum += m_context.GetLastWaitMs();
 	m_beginMsAccum += m_context.GetLastBeginMs();
 	m_waitHitCount += m_context.GetLastWaitTriggered();
+
+	// 现在 CPU 可以安全地写“当前帧槽位”
+	m_demoController.Update(dt, m_input);
+	m_sceneGpuData.Update(m_context.GetFrameIndex(), m_meshLibrary, m_scene);		//新增根据FrameIndex来Update
 	auto recordStart = std::chrono::high_resolution_clock::now();
 
 	//======================================================================================================
@@ -360,8 +447,12 @@ void App::RenderTick() {
 	D3D12_GPU_VIRTUAL_ADDRESS cbvGpuAddr = frame.frameUpload.UploadConstants(frameData);
 	// ---- 光照常量（b3）----
 	LightingConstants lightingConstants = m_lightingConstants;
-	D3D12_GPU_VIRTUAL_ADDRESS lightingCbAddr =
-		frame.frameUpload.UploadConstants(lightingConstants);
+	// 每帧解析 mask SRV，放进 b3，不占 root signature DWORD
+	lightingConstants.volumeMaskIndex = m_gbufferVolumeMask.GetBindlessIndex();
+	lightingConstants.probeMaskIndex = m_probeGrid.GetMaskSRVIndex();
+	// 每帧
+	lightingConstants.probeDataUavIndex = m_probeGrid.GetProbeDataUAVIndex();
+	D3D12_GPU_VIRTUAL_ADDRESS lightingCbAddr = frame.frameUpload.UploadConstants(lightingConstants);
 
 	// ---- 光源数组（t5）：每帧写进 frameUpload ----
 	const uint64_t lightBytes = m_gpuLights.size() * sizeof(GPULight);
@@ -392,18 +483,30 @@ void App::RenderTick() {
 	ctx.lightCount = static_cast<uint32_t>(m_gpuLights.size());
 	ctx.debugMode = m_debugMode;
 	ctx.backbufferRtv = rtvHandle;
+	// App 是组合根：每帧解析一次 bindings，Pass 只读 ctx.bindings
+	// 每帧解析一次，Pass 不再关心数据来自哪个模块
+	ctx.bindings.objectDataBindlessIndex =
+		m_sceneGpuData.GetBindlessIndex(ctx.frameIndex);
+	ctx.bindings.tlasDescriptor =
+		m_rtScene.GetTLASDescriptor(ctx.frameIndex);
 
 	m_lightingPass.SetBackbuffer(m_backbufferIds[ctx.frameIndex]);
 
 	m_graph.BeginFrame();
 
+	m_graph.AddPass(m_tlasUpdatePass);   // 新：每帧重建 TLAS
 	m_graph.AddPass(m_gbufferPass);
 	m_graph.AddPass(m_computeSmokePass);
-	m_graph.AddPass(m_probeUpdatePass);
-	m_graph.AddPass(m_probeBorderFixupPass);      // irradiance gutter
+	m_graph.AddPass(m_probeRayPass);          // 生成射线 + 求交
+	m_graph.AddPass(m_probeRayShadePass);     // 写 radiance
+	m_graph.AddPass(m_probeUpdatePass);       // 旧的 atlas 更新，暂时保留
+	m_graph.AddPass(m_probeBorderFixupPass);  // irradiance gutter
 	m_graph.AddPass(m_probeDistancePass);         // 距离矩更新
 	m_graph.AddPass(m_probeDistanceBorderPass);   // 距离矩 gutter
+	m_graph.AddPass(m_probeFixupPass);			// 物体内Probe修正
 	m_graph.AddPass(m_lightingPass);
+	// 帧末 relocation：本帧所有 pass 用旧 offset，写入的新 offset 下一帧生效
+	m_graph.AddPass(m_probeRelocationPass);
 	
 
 	// 收尾：backbuffer 切回 PRESENT（空执行，只用于插屏障）
@@ -453,27 +556,28 @@ void App::UpdateFrameStats(float deltaTime) {
 		const float avgPresentMs = m_presentMsAccum * invSamples;
 		const float avgTickMs = m_tickCpuMsAccum * invSamples;
 
-		wchar_t titleBuffer[512];   // 字段变多了，256 可能不够
+		wchar_t titleBuffer[1024];   // 增加 GPU 名称后扩大，避免截断
 		swprintf_s(
 			titleBuffer,
-			L"... | FPS: %.1f | Frame: %.3f ms"
+			L"... | GPU: %ls | FPS: %.1f | Frame: %.3f ms"
 			L" | WaitGPU: %.2f ms | WaitHit: %u/%u"
 			L" | Begin: %.2f ms"
 			L" | Record: %.2f ms | Execute: %.2f ms | Present: %.2f ms"
 			L" | TickCPU: %.2f ms | Objects: %u | Heap: %s",
-			avgFps,                                  // 1  FPS
-			avgMs,                                   // 2  Frame
-			avgWaitMs,                               // 3  WaitGPU
-			static_cast<unsigned>(m_waitHitCount),   // 4  WaitHit 分子
-			static_cast<unsigned>(m_recordCpuSamples), // 5  WaitHit 分母
-			avgBeginMs,                              // 6  Begin
-			avgRecordMs,                             // 7  Record
-			avgExecuteMs,                            // 8  Execute
-			avgPresentMs,                            // 9  Present
-			avgTickMs,                               // 10 TickCPU
-			static_cast<unsigned>(m_scene.GetObjects().size()), // 11 Objects
+			m_context.GetAdapterName(),               // 1  实际使用的显卡
+			avgFps,                                   // 2  FPS
+			avgMs,                                    // 3  Frame
+			avgWaitMs,                                // 4  WaitGPU
+			static_cast<unsigned>(m_waitHitCount),    // 5  WaitHit 分子
+			static_cast<unsigned>(m_recordCpuSamples),// 6  WaitHit 分母
+			avgBeginMs,                               // 7  Begin
+			avgRecordMs,                              // 8  Record
+			avgExecuteMs,                             // 9  Execute
+			avgPresentMs,                             // 10 Present
+			avgTickMs,                                // 11 TickCPU
+			static_cast<unsigned>(m_scene.GetObjects().size()), // 12 Objects
 			m_context.GetFrame().frameUpload.IsUsingGpuUploadHeap()
-			? L"GPU_UPLOAD (ReBAR)" : L"UPLOAD (SysRAM)"); // 12 Heap
+			? L"GPU_UPLOAD (ReBAR)" : L"UPLOAD (SysRAM)"); // 13 Heap
 
 		SetWindowTextW(m_hwnd, titleBuffer);
 

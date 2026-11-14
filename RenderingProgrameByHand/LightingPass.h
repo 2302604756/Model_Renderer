@@ -15,8 +15,6 @@ public:
         RenderGraph::ResourceId normalId,
         RenderGraph::ResourceId depthId,
         uint32_t depthBindlessIndex,
-        uint32_t objectDataBindlessIndex,
-        D3D12_GPU_DESCRIPTOR_HANDLE tlasDescriptor,
         uint32_t computeTextureIndex,
         RenderGraph::ResourceId probeGridId,
         const DirectX::XMFLOAT3& gridOrigin,
@@ -24,7 +22,10 @@ public:
         uint32_t gridCountX, uint32_t gridCountY, uint32_t gridCountZ,
         uint32_t probeSrvIndex,
         RenderGraph::ResourceId probeDistanceAtlasId, // 距离矩 atlas 资源
-        uint32_t distanceAtlasIndex);                 // 距离矩 atlas SRV
+        uint32_t distanceAtlasIndex,
+        RenderGraph::ResourceId volumeMaskId,
+        uint32_t volumeMaskIndex,
+        uint32_t probeMaskIndex);                 // 距离矩 atlas SRV
 
     // 每帧由 App 设置（backbuffer 在 3 张图之间轮换）
     void SetBackbuffer(RenderGraph::ResourceId backbufferId) { m_backbufferId = backbufferId; }
@@ -45,9 +46,8 @@ private:
     RenderGraph::ResourceId m_backbufferId = RenderGraph::kInvalidId;
 
     uint32_t m_depthBindlessIndex = 0;
-    uint32_t m_objectDataBindlessIndex = 0;
     uint32_t m_computeTextureIndex = 0;
-    D3D12_GPU_DESCRIPTOR_HANDLE m_tlasDescriptor{};
+
 
     //探针pass
     RenderGraph::ResourceId m_probeGridId = RenderGraph::kInvalidId;
@@ -57,4 +57,7 @@ private:
     uint32_t                m_probeSrvIndex = 0;
     RenderGraph::ResourceId m_probeDistanceAtlasId = RenderGraph::kInvalidId;
     uint32_t                m_distanceAtlasIndex = 0;
+    RenderGraph::ResourceId m_volumeMaskId = RenderGraph::kInvalidId;
+    uint32_t                m_volumeMaskIndex = 0;
+    uint32_t                m_probeMaskIndex = 0;
 };

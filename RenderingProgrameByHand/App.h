@@ -26,12 +26,21 @@
 #include "ProbeUpdatePass.h"
 #include "ProbeBorderFixupPass.h"
 #include "ProbeDistancePass.h"
+#include "ProbeRayBuffer.h"
+#include "ProbeRayPass.h"
+#include "ProbeRayShadePass.h"
+#include "ProbeFixupPass.h"
+#include "ProbeRelocationPass.h"
 
 
 //CPU端与GPU端场景数据构建
 #include "Scene.h"
 #include "SceneGpuData.h"
-#include "LightingTypes.h"  
+#include "LightingTypes.h" 
+//动态场景
+#include "DemoController.h"
+#include "TLASUpdatePass.h"
+
 
 #include "Camera.h"
 #include "Input.h"
@@ -85,13 +94,15 @@ private:
 	uint32_t m_textureIndex = 0;
 	//帧ID
 	uint32_t m_frameCounter = 0;
+	RenderGraph::ResourceId m_gbufferVolumeMaskId = RenderGraph::kInvalidId;
 
 	//光追
 	rt::AccelerationScene       m_rtScene;
 
 	//CPU与GPU场景数据
-	Scene        m_scene;
-	SceneGpuData m_sceneGpuData;
+	Scene			 m_scene;
+	SceneGpuData	 m_sceneGpuData;
+	DemoController   m_demoController;
 
 	//光源
 	std::vector<GPULight> m_gpuLights;
@@ -101,6 +112,7 @@ private:
 
 	RenderTexture m_gbufferAlbedo;
 	RenderTexture m_gbufferNormal;
+	RenderTexture m_gbufferVolumeMask;
 	uint32_t      m_depthBindlessIndex = UINT32_MAX;
 
 
@@ -115,17 +127,29 @@ private:
 	std::vector<RenderGraph::ResourceId> m_backbufferIds;
 
 	//探针Pass
-	ProbeGrid        m_probeGrid;
-	ProbeUpdatePass  m_probeUpdatePass;
+	ProbeGrid					m_probeGrid;
+	ProbeUpdatePass				m_probeUpdatePass;
 	ComPtr<ID3D12RootSignature> m_probeRootSignature;
 	ComPtr<ID3D12PipelineState> m_probePSO;
 	RenderGraph::ResourceId     m_probeGridId = RenderGraph::kInvalidId;
-	ProbeBorderFixupPass m_probeBorderFixupPass;
+	ProbeBorderFixupPass		m_probeBorderFixupPass;
 	ComPtr<ID3D12PipelineState> m_probeBorderPSO;
-	ProbeDistancePass   m_probeDistancePass;          // 距离矩更新
+	ProbeDistancePass			m_probeDistancePass;          // 距离矩更新
 	ComPtr<ID3D12PipelineState> m_probeDistancePSO;   // 距离矩 PSO
 	RenderGraph::ResourceId     m_probeDistanceId = RenderGraph::kInvalidId;
-	ProbeBorderFixupPass m_probeDistanceBorderPass;   // 距离矩 gutter
+	ProbeBorderFixupPass		m_probeDistanceBorderPass;   // 距离矩 gutter
+	ProbeRayBuffer				m_probeRayBuffer;
+	ProbeRayPass				m_probeRayPass;
+	ProbeRayShadePass			m_probeRayShadePass;
+	ComPtr<ID3D12PipelineState> m_probeRayPSO;
+	ComPtr<ID3D12PipelineState> m_probeRayShadePSO;
+	RenderGraph::ResourceId     m_probeRayBufferId = RenderGraph::kInvalidId;
+	TLASUpdatePass				m_tlasUpdatePass;
+	ProbeFixupPass m_probeFixupPass;
+	ComPtr<ID3D12PipelineState> m_probeFixupPSO;
+	// 探针重定位（帧末更新下帧使用的偏移）
+	ProbeRelocationPass m_probeRelocationPass;
+	ComPtr<ID3D12PipelineState> m_probeRelocationPSO;
 
 	//用于窗口状态刷新
 	HWND                                                 m_hwnd = nullptr;

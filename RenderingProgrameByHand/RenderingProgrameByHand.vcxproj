@@ -136,6 +136,7 @@
     <ClCompile Include="CPUDescriptorAllocator.cpp" />
     <ClCompile Include="d3d12lite.cpp" />
     <ClCompile Include="dds_loader.cpp" />
+    <ClCompile Include="DemoController.cpp" />
     <ClCompile Include="GBufferPass.cpp" />
     <ClCompile Include="Input.cpp" />
     <ClCompile Include="LightingPass.cpp" />
@@ -144,7 +145,12 @@
     <ClCompile Include="MeshLibrary.cpp" />
     <ClCompile Include="ProbeBorderFixupPass.cpp" />
     <ClCompile Include="ProbeDistancePass.cpp" />
+    <ClCompile Include="ProbeFixupPass.cpp" />
     <ClCompile Include="ProbeGrid.cpp" />
+    <ClCompile Include="ProbeRayBuffer.cpp" />
+    <ClCompile Include="ProbeRayPass.cpp" />
+    <ClCompile Include="ProbeRayShadePass.cpp" />
+    <ClCompile Include="ProbeRelocationPass.cpp" />
     <ClCompile Include="ProbeUpdatePass.cpp" />
     <ClCompile Include="RenderContext.cpp" />
     <ClCompile Include="RenderGraph.cpp" />
@@ -153,6 +159,7 @@
     <ClCompile Include="Scene.cpp" />
     <ClCompile Include="SceneGpuData.cpp" />
     <ClCompile Include="Texture2D.cpp" />
+    <ClCompile Include="TLASUpdatePass.cpp" />
     <ClCompile Include="TransientHeap.cpp" />
     <ClCompile Include="UploadHeap.cpp" />
   </ItemGroup>
@@ -173,6 +180,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
     </ClCompile>
+    <ClInclude Include="DemoController.h" />
     <ClInclude Include="DepthBuffer.h" />
     <ClInclude Include="FrameConstants.h" />
     <ClInclude Include="GBufferPass.h" />
@@ -188,9 +196,15 @@
     <ClInclude Include="PipelineBuilder.h" />
     <ClInclude Include="ProbeBorderFixupPass.h" />
     <ClInclude Include="ProbeDistancePass.h" />
+    <ClInclude Include="ProbeFixupPass.h" />
     <ClInclude Include="ProbeGrid.h" />
+    <ClInclude Include="ProbeRayBuffer.h" />
+    <ClInclude Include="ProbeRayPass.h" />
+    <ClInclude Include="ProbeRayShadePass.h" />
+    <ClInclude Include="ProbeRelocationPass.h" />
     <ClInclude Include="ProbeTypes.h" />
     <ClInclude Include="ProbeUpdatePass.h" />
+    <ClInclude Include="ProbeVolume.h" />
     <ClInclude Include="RenderContext.h" />
     <ClInclude Include="pass.h" />
     <ClInclude Include="RenderGraph.h" />
@@ -200,6 +214,7 @@
     <ClInclude Include="SceneGpuData.h" />
     <ClInclude Include="SceneTypes.h" />
     <ClInclude Include="Texture2D.h" />
+    <ClInclude Include="TLASUpdatePass.h" />
     <ClInclude Include="TransientHeap.h" />
     <ClInclude Include="UploadHeap.h" />
   </ItemGroup>

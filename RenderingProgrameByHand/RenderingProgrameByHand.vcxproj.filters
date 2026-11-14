@@ -70,6 +70,9 @@
     <Filter Include="探针">
       <UniqueIdentifier>{6cadea2e-996c-4edb-b495-324e9a3794d5}</UniqueIdentifier>
     </Filter>
+    <Filter Include="DemoController">
+      <UniqueIdentifier>{2f25de77-6f07-48bd-8bb3-7b702c05e45f}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="d3d12lite.cpp">
@@ -123,9 +126,6 @@
     <ClCompile Include="RenderTexture.cpp">
       <Filter>源文件\Resource</Filter>
     </ClCompile>
-    <ClCompile Include="AccelerationStructure.cpp">
-      <Filter>源文件\RayTracing</Filter>
-    </ClCompile>
     <ClCompile Include="Scene.cpp">
       <Filter>Scene</Filter>
     </ClCompile>
@@ -154,6 +154,30 @@
       <Filter>探针</Filter>
     </ClCompile>
     <ClCompile Include="ProbeDistancePass.cpp">
+      <Filter>探针</Filter>
+    </ClCompile>
+    <ClCompile Include="ProbeRayBuffer.cpp">
+      <Filter>探针</Filter>
+    </ClCompile>
+    <ClCompile Include="ProbeRayPass.cpp">
+      <Filter>探针</Filter>
+    </ClCompile>
+    <ClCompile Include="ProbeRayShadePass.cpp">
+      <Filter>探针</Filter>
+    </ClCompile>
+    <ClCompile Include="DemoController.cpp">
+      <Filter>DemoController</Filter>
+    </ClCompile>
+    <ClCompile Include="AccelerationStructure.cpp">
+      <Filter>头文件\RayTracing</Filter>
+    </ClCompile>
+    <ClCompile Include="TLASUpdatePass.cpp">
+      <Filter>头文件\Pass</Filter>
+    </ClCompile>
+    <ClCompile Include="ProbeFixupPass.cpp">
+      <Filter>探针</Filter>
+    </ClCompile>
+    <ClCompile Include="ProbeRelocationPass.cpp">
       <Filter>探针</Filter>
     </ClCompile>
   </ItemGroup>
@@ -273,6 +297,30 @@
       <Filter>探针</Filter>
     </ClInclude>
     <ClInclude Include="ProbeDistancePass.h">
+      <Filter>探针</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeRayBuffer.h">
+      <Filter>探针</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeRayPass.h">
+      <Filter>探针</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeRayShadePass.h">
+      <Filter>探针</Filter>
+    </ClInclude>
+    <ClInclude Include="DemoController.h">
+      <Filter>DemoController</Filter>
+    </ClInclude>
+    <ClInclude Include="TLASUpdatePass.h">
+      <Filter>头文件\Pass</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeVolume.h">
+      <Filter>探针</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeFixupPass.h">
+      <Filter>探针</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeRelocationPass.h">
       <Filter>探针</Filter>
     </ClInclude>
   </ItemGroup>

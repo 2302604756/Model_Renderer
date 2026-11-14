@@ -13,7 +13,8 @@ struct PerObjectConstants {
 	DirectX::XMFLOAT4   albedo;       // 128 16
 	uint32_t            vbIndex;      // 144 bindless VB 槽
 	uint32_t            textureIndex; // 148（deferred 暂未使用）
-	uint32_t            padding[2];   // 152 8
+	uint32_t			volumeMask;   // G-buffer 输出
+	uint32_t			padding;
 };
 static_assert(sizeof(PerObjectConstants) == 160,
 	"PerObjectConstants 必须是 40 个 32-bit 常量");

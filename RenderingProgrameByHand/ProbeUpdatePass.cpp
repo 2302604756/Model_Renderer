@@ -5,21 +5,22 @@
 void ProbeUpdatePass::Init(ID3D12RootSignature* rootSignature,
     ID3D12PipelineState* pso,
     ProbeGrid* probeGrid,
+    ProbeRayBuffer* rayBuffer,
     RenderGraph::ResourceId probeGridId,
-    uint32_t objectDataBindlessIndex,
-    D3D12_GPU_DESCRIPTOR_HANDLE tlasDescriptor)
+    RenderGraph::ResourceId rayBufferId)
 {
     m_rootSignature = rootSignature;
     m_pso = pso;
     m_probeGrid = probeGrid;
     m_probeGridId = probeGridId;
-    m_objectDataBindlessIndex = objectDataBindlessIndex;
-    m_tlasDescriptor = tlasDescriptor;
+    m_rayBuffer = rayBuffer;
+    m_rayBufferId = rayBufferId;
 }
 
 void ProbeUpdatePass::Declare(RenderGraph::PassBuilder& builder)
 {
     builder.ReadWrite(m_probeGridId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    builder.ReadWrite(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS); 
 }
 
 void ProbeUpdatePass::Execute(RenderGraph::FrameContext& ctx)
@@ -27,7 +28,7 @@ void ProbeUpdatePass::Execute(RenderGraph::FrameContext& ctx)
     ID3D12GraphicsCommandList* cmdList = ctx.cmdList;
     const ProbeGrid::Desc& grid = m_probeGrid->GetDesc();
 
-       ProbeUpdateParams p{};
+    ProbeUpdateParams p{};
     p.originX = grid.origin.x;
     p.originY = grid.origin.y;
     p.originZ = grid.origin.z;
@@ -37,20 +38,21 @@ void ProbeUpdatePass::Execute(RenderGraph::FrameContext& ctx)
     p.countZ = grid.countZ;
     p.frameIndex = m_frameIndex++;
     p.probeCount = grid.GetProbeCount();
-    p.rayCount = 64;
-    p.objectIndex = m_objectDataBindlessIndex;
+    p.rayCount = ProbeRayBuffer::kRayCount;
+    p.objectIndex = ctx.bindings.objectDataBindlessIndex;
     p.irradianceUav = m_probeGrid->GetUAVIndex();
+    p.rayBufferUav = m_rayBuffer->GetUAVIndex();
 
 
     LightingParams lp{};
-    lp.objectIndex = m_objectDataBindlessIndex;
+    lp.objectIndex = ctx.bindings.objectDataBindlessIndex;
     lp.lightCount = ctx.lightCount;
 
     cmdList->SetComputeRootSignature(m_rootSignature);
     cmdList->SetPipelineState(m_pso);
     cmdList->SetComputeRoot32BitConstants(0, 16, &p, 0);
     cmdList->SetComputeRoot32BitConstants(1, 16, &lp, 0);
-    cmdList->SetComputeRootDescriptorTable(2, m_tlasDescriptor);
+    cmdList->SetComputeRootDescriptorTable(2, ctx.bindings.tlasDescriptor);
     cmdList->SetComputeRootConstantBufferView(3, ctx.lightingConstantsAddress);
     cmdList->SetComputeRootShaderResourceView(4, ctx.lightBufferAddress);
 

@@ -3,6 +3,7 @@
 #include "UploadHeap.h"
 #include <cstdint>
 #include <vector>
+#include <string>
 #include <chrono>	
 
 struct FrameResource {
@@ -40,6 +41,9 @@ public:
 	uint32_t GetFrameIndex() { return m_frameIndex; }
 	uint32_t GetFrameCount() { return m_maxFrameCount; }
 
+	// 当前 D3D12 设备实际选中的适配器名字，用于窗口标题/调试显示
+	const wchar_t* GetAdapterName() const noexcept { return m_adapterName.c_str(); }
+
 
 	//用于时间实验
 	float time = 0.0f;
@@ -71,6 +75,7 @@ private:
 	ComPtr<IDXGIFactory4>      m_factory;
 	ComPtr<ID3D12Device>       m_device;
 	ComPtr<IDXGISwapChain3>    m_swapChain;
+	std::wstring               m_adapterName; // 实际选中适配器名称
 
 	//用于监控用时的变量
 	float m_lastExecuteMs = 0.0f;

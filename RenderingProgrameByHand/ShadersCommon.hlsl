@@ -15,7 +15,8 @@ struct PerObjectData
     float4 albedo; // 16
     uint vbIndex; // 4
     uint textureIndex; // 4
-    uint2 padding; // 8
+    uint volumeMask;
+    uint padding;
 };
 
 // ---- b1：每帧常量（对应 C++ PerFrameConstants）----
@@ -50,6 +51,10 @@ cbuffer LightingCB : register(b3)
     float4 sunColor;
     float4 skyColor;
     float4 ambient;
+    uint volumeMaskIndex; // G-buffer surface mask
+    uint probeMaskIndex; // ProbeMaskBuffer
+    uint probeDataUavIndex; // Probe relocation offset UAV
+    uint padding;
 };
 
 float3 SunL()
@@ -69,7 +74,19 @@ struct GPUObjectData
     uint vbIndex;
     uint ibIndex;
     uint indexCount;
-    uint padding;
+    uint volumeMask;
+};
+
+// 对应 C++ ProbeRay（64 B）
+struct ProbeRay
+{
+    float3 dir; // 12 射线方向
+    float hitT; // 4  命中距离
+    float3 hitPos; // 12 世界空间命中点
+    uint instanceID; // 4  0xFFFFFFFF = miss
+    float3 hitN; // 12 世界空间法线
+    float backface; // 4 做是否在物体内部的检测
+    float4 radiance; // 16 由 ProbeRayShadeCS 写入
 };
 
 // ---- 随机 / 低差异采样 ----
@@ -160,7 +177,9 @@ float3 StochasticFibonacci(uint i, uint n, float2 rot)
 float2 OctEncode(float3 n)
 {
     //投影到八面体上
-    n /= (abs(n.x) + abs(n.y) + abs(n.z));
+    float l1 = abs(n.x) + abs(n.y) + abs(n.z);
+    // 防止零向量造成除零
+    n /= max(l1, 1e-8f);
     float2 uv = n.xy;
     if (n.z < 0.0f)
     {
@@ -228,20 +247,63 @@ float TraceHitDistance(float3 origin, float3 dir, float tMax)
     return tMax;
 }
 
+// 从 instance/prim/bary 取命中三角形的世界坐标、法线、albedo
+bool FetchHitSurface(uint instanceID, uint primID, float2 bary, uint objectIndex,
+                     float3 rayDir,
+                     out float3 hitPos, out float3 hitN, out float3 albedo,out
+bool isBackface)
+{
+    StructuredBuffer<GPUObjectData> objects = ResourceDescriptorHeap[objectIndex];
+    GPUObjectData obj = objects[instanceID];
+    
+    // 三角形索引
+    StructuredBuffer<uint> ib = ResourceDescriptorHeap[obj.ibIndex];
+    uint i0 = ib[primID * 3 + 0];
+    uint i1 = ib[primID * 3 + 1];
+    uint i2 = ib[primID * 3 + 2];
+    
+     // 顶点插值
+    StructuredBuffer<Vertex> vb = ResourceDescriptorHeap[obj.vbIndex];
+    Vertex v0 = vb[i0];
+    Vertex v1 = vb[i1];
+    Vertex v2 = vb[i2];
+    
+    float w0 = 1.0f - bary.x - bary.y;
+    float3 localPos = v0.position * w0 + v1.position * bary.x + v2.position * bary.y;
+    float3 localNrm = v0.normal * w0 + v1.normal * bary.x + v2.normal * bary.y;
 
-// ---- b2：Lighting pass 参数（12 DWORD = 48 B）----
+    hitPos = mul(obj.world, float4(localPos, 1.0f)).xyz;
+    hitN = normalize(mul(obj.normalMatrix, float4(localNrm, 0.0f)).xyz);
+    //记录原始 Normal
+    float3 rawN = normalize(mul(obj.normalMatrix, float4(localNrm, 0.0f)).xyz);
+
+    // 翻转前判断：射线方向和几何法线同向 = 从内部打到背面
+    isBackface = dot(rawN, rayDir) > 0.0f;
+
+    hitN = isBackface ? -rawN : rawN;
+    
+    // 背面命中时翻转，保证法线朝向射线来向
+    if (dot(hitN, rayDir) > 0.0f)
+        hitN = -hitN;
+
+    albedo = obj.albedo.rgb;
+    return true;
+}
+
+
+// ---- b2：Lighting pass 参数（18 DWORD = 72 B）----
 struct LightingParams
 {
     uint albedoIndex;
     uint normalIndex;
     uint depthIndex;
     uint debugMode;
-    uint objectIndex; // GPUObjectData buffer 的 bindless 槽
+    uint objectIndex;                // GPUObjectData buffer 的 bindless 槽
     uint lightCount;
     uint computeTextureIndex;
-    uint distanceAtlasIndex; // 距离矩 atlas SRV
-    float4 gridOriginSpacing; // xyz origin, w spacing
-    uint4 gridCountsAndProbeIndex; // xyz counts, w probe SRV index
+    uint distanceAtlasIndex;         // 距离矩 atlas SRV
+    float4 gridOriginSpacing;        // xyz origin, w spacing
+    uint4 gridCountsAndProbeIndex;   // xyz counts, w probe SRV index
 };
 
 ConstantBuffer<LightingParams> g_Lighting : register(b2);
@@ -302,13 +364,32 @@ float3 EvaluateDirectLighting(float3 P, float3 N)
     return result;
 }
 
+//渐变天空
+float3 SkyRadiance(float3 dir)
+{
+    float t = saturate(dir.y * 0.5f + 0.5f);
+    return lerp(float3(0.03f, 0.04f, 0.06f), skyColor.rgb, t);
+}
+
+// 命中点统一着色：直射 + 环境 + 天空（两条 GI 路径共用）
+float3 ShadeHitPoint(float3 hitPos, float3 hitN, float3 albedo)
+{
+    // 开口方向（Cornell Box 前侧敞开，天空从 -z 方向进来）
+    float3 skyDir = normalize(float3(0.0f, 0.3f, -1.0f));
+    float skyVis = TraceSunShadow(hitPos, hitN, skyDir);
+
+    return albedo * (
+      EvaluateDirectLighting(hitPos, hitN)
+    + SkyColor() * skyVis * 0.3f);
+}
+
 // 沿一条射线求辐射亮度：命中点着色 + 天空
 float3 TraceRadiance(float3 origin, float3 dir)
 {
     RayDesc ray;
     ray.Origin = origin;
     ray.Direction = dir;
-    ray.TMin = 0.0f;
+    ray.TMin = 0.001f;
     ray.TMax = 100.0f;
 
     RayQuery < RAY_FLAG_NONE > query;
@@ -344,7 +425,7 @@ float3 TraceRadiance(float3 origin, float3 dir)
     if (dot(hitN, dir) > 0.0f)
         hitN = -hitN;
 
-    return obj.albedo.rgb * (EvaluateDirectLighting(hitPos, hitN) + SkyColor() * 0.3f);
+    return ShadeHitPoint(hitPos, hitN, obj.albedo.rgb);
 }
 
 #endif // SHADERS_COMMON_HLSL

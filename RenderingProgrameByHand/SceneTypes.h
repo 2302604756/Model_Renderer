@@ -12,6 +12,13 @@ struct RenderObject {
 	DirectX::XMFLOAT4 albedo{ 1.0f, 1.0f, 1.0f, 1.0f };
 	uint32_t          meshId = 0;
 	uint32_t          textureIndex = 0;
+
+	// 用于动态场景
+	uint32_t		  id = 0;          // 稳定 ID
+	uint32_t		  flags = 0;       // dynamic / visible / castsShadow
+	DirectX::XMFLOAT3 prevPosition;    // 上一帧位置，用于判断脏探针
+	// 该物体实例属于哪些 ProbeVolume（bitmask）
+	uint32_t volumeMask = 0;			
 };
 
 // CPU 侧光源（阶段 3 由 BuildLights 转成 GPULight[]）
@@ -27,3 +34,4 @@ struct Light {
 	float innerCone = 0.0f;     // 弧度，spot 用
 	float outerCone = 0.0f;
 };
+

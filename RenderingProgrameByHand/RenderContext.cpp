@@ -1,5 +1,6 @@
 #include "RenderContext.h"
 #include <dxgi1_6.h>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include "d3d12lite.h"
@@ -26,19 +27,89 @@ void RenderContext::Init(HWND hwnd, uint32_t width, uint32_t height) {
     
     THROW_IF_FAILED(CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&m_factory)));
 
-    // 枚举高算力硬件显卡（跳过软件适配器）
-    ComPtr<IDXGIAdapter1> adapter;
-    for (uint32_t i = 0; m_factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
-        DXGI_ADAPTER_DESC1 desc;
-        adapter->GetDesc1(&desc);
+    // 选择适配器：优先独显，避免混合显卡机器默认落到核显。
+    // 顺序：NVIDIA 独显 -> DXGI 高性能枚举 -> 第一个支持 D3D12 FL12 的硬件。
+    auto tryCreateDevice = [&](IDXGIAdapter1* candidate) -> bool
+    {
+        DXGI_ADAPTER_DESC1 candidateDesc{};
+        candidate->GetDesc1(&candidateDesc);
 
-        if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
-            continue;
+        if (candidateDesc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+            return false;
+
+        if (FAILED(D3D12CreateDevice(
+                candidate,
+                D3D_FEATURE_LEVEL_12_0,
+                IID_PPV_ARGS(&m_device))))
+        {
+            return false;
         }
 
-        // 优先锁定 Feature Level 12.0
-        if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&m_device)))) {
+        // 记录实际选中的适配器，窗口标题会显示它
+        m_adapterName = candidateDesc.Description;
+
+        wchar_t logBuffer[512]{};
+        swprintf_s(
+            logBuffer,
+            L"[RenderContext] Adapter: %s Vendor=0x%04X DedicatedVRAM=%llu MB\n",
+            candidateDesc.Description,
+            candidateDesc.VendorId,
+            static_cast<unsigned long long>(candidateDesc.DedicatedVideoMemory >> 20));
+        OutputDebugStringW(logBuffer);
+        return true;
+    };
+
+    ComPtr<IDXGIAdapter1> adapter;
+
+    // 1) 显式优先 NVIDIA 独显（VendorId 0x10DE）
+    for (uint32_t i = 0;
+        m_factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND;
+        ++i)
+    {
+        DXGI_ADAPTER_DESC1 desc{};
+        adapter->GetDesc1(&desc);
+
+        if (desc.VendorId == 0x10DE && tryCreateDevice(adapter.Get()))
             break;
+    }
+
+    // 2) 没有 NVIDIA 时，让 DXGI 按 Windows 的“高性能”偏好排序选一次
+    if (!m_device)
+    {
+        ComPtr<IDXGIFactory6> factory6;
+        if (SUCCEEDED(m_factory.As(&factory6)))
+        {
+            for (uint32_t i = 0;; ++i)
+            {
+                ComPtr<IDXGIAdapter1> candidate;
+                HRESULT hr = factory6->EnumAdapterByGpuPreference(
+                    i,
+                    DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                    IID_PPV_ARGS(&candidate));
+
+                if (hr == DXGI_ERROR_NOT_FOUND)
+                    break;
+                if (FAILED(hr))
+                    continue;
+
+                if (tryCreateDevice(candidate.Get()))
+                {
+                    adapter = candidate;
+                    break;
+                }
+            }
+        }
+    }
+
+    // 3) 最终兜底：枚举所有支持 D3D12 FL12 的硬件适配器
+    if (!m_device)
+    {
+        for (uint32_t i = 0;
+            m_factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND;
+            ++i)
+        {
+            if (tryCreateDevice(adapter.Get()))
+                break;
         }
     }
 
@@ -87,7 +158,7 @@ void RenderContext::Init(HWND hwnd, uint32_t width, uint32_t height) {
     //-------------------------------------------------------------------------
     // 5. 初始化环形缓冲槽位 (Frame Resources)
     // -------------------------------------------------------------------------
-    for (int i = 0; i < m_maxFrameCount; i++) {
+    for (uint32_t i = 0; i < m_maxFrameCount; i++) {
         THROW_IF_FAILED(m_device->CreateCommandAllocator(
             D3D12_COMMAND_LIST_TYPE_DIRECT,
             IID_PPV_ARGS(&m_frameResources[i].cmdAllocator)

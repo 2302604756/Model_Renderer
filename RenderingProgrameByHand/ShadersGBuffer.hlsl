@@ -35,6 +35,7 @@ struct GBufferOutput
 {
     float4 albedo : SV_Target0;
     float4 normal : SV_Target1;
+    uint volumeMask : SV_Target2; // R32_UINT
 };
 
 GBufferOutput GBufferPS(PSInput pin)
@@ -42,5 +43,6 @@ GBufferOutput GBufferPS(PSInput pin)
     GBufferOutput o;
     o.albedo = g_Object.albedo;
     o.normal = float4(normalize(pin.normal.xyz), 1.0f);
+    o.volumeMask = g_Object.volumeMask;
     return o;
 }

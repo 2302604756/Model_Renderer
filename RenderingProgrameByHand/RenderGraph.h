@@ -12,7 +12,15 @@ public:
 	using ResourceId = uint32_t;
 	static constexpr ResourceId kInvalidId = UINT32_MAX;
 
+    //===========================================================================================
     // 每次 Execute 时传给每个 Pass 的每帧数据
+    // 动态物体所需的srv槽位Index和Handle 每帧由 App 解析好的绑定，Pass 只读这里
+    struct FrameBindings
+    {
+        uint32_t                    objectDataBindlessIndex = UINT32_MAX;
+        D3D12_GPU_DESCRIPTOR_HANDLE tlasDescriptor{};
+    };
+
     struct FrameContext {
         uint32_t                    frameIndex = 0;
         ID3D12GraphicsCommandList*  cmdList = nullptr;
@@ -23,6 +31,9 @@ public:
         uint32_t                    lightCount = 0;
         uint32_t                    debugMode = 0;
         D3D12_CPU_DESCRIPTOR_HANDLE backbufferRtv{};
+
+        // 每帧外部绑定（由 App 填）
+        FrameBindings               bindings{};
     };
 
     // Pass 内声明资源读写
@@ -38,7 +49,7 @@ public:
             D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         PassBuilder& Transition(ResourceId id, D3D12_RESOURCE_STATES state); // 只切状态，不读写
 
-        struct Usage { ResourceId id; D3D12_RESOURCE_STATES state; };                       //usage用来存储ResourceID和Resource State
+        struct Usage { ResourceId id; D3D12_RESOURCE_STATES state; };                //usage用来存储ResourceID和Resource State
         const std::vector<Usage>& GetUsages() const { return m_usages; }
 
     private:

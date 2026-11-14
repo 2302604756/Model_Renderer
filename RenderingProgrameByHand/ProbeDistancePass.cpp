@@ -4,19 +4,22 @@
 void ProbeDistancePass::Init(ID3D12RootSignature* rootSignature,
     ID3D12PipelineState* pso,
     ProbeGrid* probeGrid,
-    RenderGraph::ResourceId distanceAtlasId,
-    D3D12_GPU_DESCRIPTOR_HANDLE tlasDescriptor)
+    ProbeRayBuffer* rayBuffer,
+    RenderGraph::ResourceId rayBufferId,
+    RenderGraph::ResourceId distanceAtlasId)
 {
     m_rootSignature = rootSignature;
     m_pso = pso;
     m_probeGrid = probeGrid;
     m_distanceAtlasId = distanceAtlasId;
-    m_tlasDescriptor = tlasDescriptor;
+    m_rayBuffer = rayBuffer;
+    m_rayBufferId = rayBufferId;
 }
 
 void ProbeDistancePass::Declare(RenderGraph::PassBuilder& builder)
 {
     builder.ReadWrite(m_distanceAtlasId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    builder.ReadWrite(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS); 
 }
 
 void ProbeDistancePass::Execute(RenderGraph::FrameContext& ctx)
@@ -34,12 +37,16 @@ void ProbeDistancePass::Execute(RenderGraph::FrameContext& ctx)
     p.countZ = grid.countZ;
     p.frameIndex = m_frameIndex++;
     p.probeCount = grid.GetProbeCount();
+    p.rayCount = ProbeRayBuffer::kRayCount;
     p.distanceUav = m_probeGrid->GetDistanceUAVIndex();
+    p.rayBufferUav = m_rayBuffer->GetUAVIndex();
+
 
     cmdList->SetComputeRootSignature(m_rootSignature);
     cmdList->SetPipelineState(m_pso);
     cmdList->SetComputeRoot32BitConstants(0, 16, &p, 0);
-    cmdList->SetComputeRootDescriptorTable(2, m_tlasDescriptor); // t3
+    cmdList->SetComputeRootDescriptorTable(2, ctx.bindings.tlasDescriptor); // t3
+    cmdList->SetComputeRootConstantBufferView(3, ctx.lightingConstantsAddress); // b3: probeDataUavIndex
 
     // 每个 group = 一个探针（16×16 线程）
     cmdList->Dispatch(grid.GetProbeCount(), 1, 1);
