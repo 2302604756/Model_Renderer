@@ -47,6 +47,7 @@ public:
     // 距离矩 atlas（RGBA16F：x = mean dist, y = mean dist²）
     ID3D12Resource* GetDistanceResource() const noexcept { return m_distanceAtlas.GetResource(); }
     ID3D12Resource* GetProbeDataResource() const noexcept { return m_probeDataBuffer.Get(); }
+    ID3D12Resource* GetFilteredResource() const noexcept { return m_filteredAtlas.GetResource(); }
 
     uint32_t GetDistanceSRVIndex() const noexcept { return m_distanceAtlas.GetBindlessIndex(); }
     uint32_t GetDistanceUAVIndex() const noexcept { return m_distanceAtlas.GetUAVBindlessIndex(); }
@@ -54,7 +55,9 @@ public:
     uint32_t GetDistanceAtlasHeight() const { return m_desc.countY * m_desc.countZ * kDistanceTileStride; }
 
     uint32_t GetProbeDataSRVIndex() const noexcept { return m_probeDataSrvIndex; }
+    uint32_t GetFilteredSRVIndex() const noexcept { return m_filteredAtlas.GetBindlessIndex(); }
     uint32_t GetProbeDataUAVIndex() const noexcept { return m_probeDataUavIndex; }
+    uint32_t GetFilteredUAVIndex() const noexcept { return m_filteredAtlas.GetUAVBindlessIndex(); }
 
     void BuildMasks(ID3D12Device* device,
         GPUDescriptorAllocator& bindless,
@@ -65,6 +68,7 @@ public:
 
 private:
     RenderTexture m_atlas;
+    RenderTexture m_filteredAtlas;
     RenderTexture m_distanceAtlas; //深度矩Texture
     Desc          m_desc{};    
 

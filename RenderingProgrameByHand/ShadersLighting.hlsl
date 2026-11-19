@@ -73,7 +73,7 @@ float3 SampleProbeIrradiance(uint probeIndex, float3 dir)
     Texture2D<float4> atlas =
         ResourceDescriptorHeap[g_Lighting.gridCountsAndProbeIndex.w];
 
-    return atlas.SampleLevel(g_LinearSampler, atlasUV, 0.0f).rgb;
+    return atlas.SampleLevel(g_ClampSampler, atlasUV, 0.0f).rgb;
 }
 
 // 采样单个探针的距离矩（x = E[d]，y = E[d²]，z = validity）
@@ -99,7 +99,7 @@ float3 SampleProbeDistance(uint probeIndex, float3 dir)
     Texture2D<float4> distAtlas =
         ResourceDescriptorHeap[g_Lighting.distanceAtlasIndex];
 
-    return distAtlas.SampleLevel(g_LinearSampler, atlasUV, 0.0f).xyz;
+    return distAtlas.SampleLevel(g_ClampSampler, atlasUV, 0.0f).xyz;
 }
 
 // DDGI 采样结果 + 调试信息
@@ -113,265 +113,202 @@ struct DDGISample
     uint dominantProbe; // 权重最大的探针 index
 };
 
-// 8 探针 cage + 三线性 + 背面权重 + Chebyshev 可见性
-DDGISample SampleDDGI(float3 P, float3 N, uint2 pixel, uint pointMask)
+// Probe的一维Index
+uint DDGIProbeIndex(int3 coords, uint3 counts)
+{
+    return (coords.z * counts.y + coords.y) * counts.x + coords.x;
+}
+
+// 生成对应角点的索引
+int3 DDGICellCorner(uint i)
+{
+    return int3(i & 1u, (i >> 1) & 1u, (i >> 2) & 1u);
+}
+
+// 
+float DDGITrilinearWeight(int3 corner, float3 cellFraction)
+{
+    float3 axisWeights = lerp(1.0f - cellFraction, cellFraction, float3(corner));
+    return axisWeights.x * axisWeights.y * axisWeights.z;
+}
+
+float DDGIWrapWeight(float3 pointToProbe, float3 normal)
+{
+    float backFacing = saturate(-dot(normalize(pointToProbe), normal));
+    return 1.0f - 0.8f * backFacing * backFacing;
+}
+
+float DDGIChebyshevWeight(float2 moments, float distanceToProbe)
+{
+    const float varianceBias = 0.02f;
+    const float meanBias = 0.07f;
+    float variance = abs(moments.x * moments.x - moments.y) + varianceBias;
+    float mean = max(moments.x + meanBias, 0.0f);
+
+    float visibility = 1.0f;
+    if (distanceToProbe > mean)
+    {
+        float delta = distanceToProbe - mean;
+        visibility = variance / (variance + delta * delta);
+    }
+
+    return max(visibility * visibility * visibility, 0.05f);
+}
+
+DDGISample SampleDDGI(float3 P, float3 N, uint pointMask)
 {
     StructuredBuffer<uint> probeMasks = ResourceDescriptorHeap[probeMaskIndex];
-    // 探针 relocation 的每探针世界空间偏移（与探针射线起点用同一份数据）
     RWStructuredBuffer<float4> probeData = ResourceDescriptorHeap[probeDataUavIndex];
-    
+
     uint3 counts = g_Lighting.gridCountsAndProbeIndex.xyz;
+    int3 maxProbeCoords = int3(counts) - 1;
     float3 origin = g_Lighting.gridOriginSpacing.xyz;
     float spacing = g_Lighting.gridOriginSpacing.w;
 
-    // 调试累计
-    float validCount = 0.0f;
-    float chebWeighted = 0.0f;
-    float dominantW = -1.0f;
-    uint dominantProbe = 0;
-
-    DDGISample result;
-    result.E = float3(0.0f, 0.0f, 0.0f);
-    result.wsum = 0.0f;
-    result.validCount = 0.0f;
-    result.chebAvg = 0.0f;
-    result.dominantProbe = 0;
-
-    // 网格坐标
+    // 插值使用规则格点。可见性和背面权重使用重定位后的探针位置。
     float3 gridPos = (P - origin) / spacing;
     float3 base = floor(gridPos);
-    float3 f = gridPos - base;
-    
-    // 可见性测试点的偏置：法线 + 3 倍视线方向
-    // 作用是把测试点推离明暗边界，避免在表面自遮挡
+    int3 baseCoords = int3(base);
+    float3 cellFraction = saturate(gridPos - base);
+    float3 smoothFraction = cellFraction * cellFraction * (3.0f - 2.0f * cellFraction);
+    const float interpolationSmoothness = 0.0f;
+    cellFraction = lerp(cellFraction, smoothFraction, interpolationSmoothness);
+
     float normalBias = spacing * 0.15f;
-    float3 wo = normalize(g_Frame.cameraPos.xyz - P);
-    float3 visibilityBias = (N + 3.0f * wo) * normalBias;
+    float3 viewDirection = normalize(g_Frame.cameraPos.xyz - P);
+    float3 visibilityBias = (N + 3.0f * viewDirection) * normalBias;
+    bool trilinearOnly = g_Lighting.debugMode == 15;
 
-    float3 irradiance = float3(0.0f, 0.0f, 0.0f);
-    float wsum = 0.0f;
+    float3 irradianceSum = 0.0f;
+    float weightSum = 0.0f;
+    float validCount = 0.0f;
+    float visibilitySum = 0.0f;
+    float dominantWeight = -1.0f;
+    uint dominantProbe = 0;
 
-
+    // 主路径：累加当前格子的八个角点。
     [unroll]
     for (uint i = 0; i < 8; ++i)
     {
-        // 8 个角：bit0=x，bit1=y，bit2=z
-        //根据i得到八个角点的索引
-        int3 corner = int3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
-        int3 idx = clamp(int3(base) + corner,
-                         int3(0, 0, 0), int3(counts) - 1);
+        int3 corner = DDGICellCorner(i);
+        int3 coords = clamp(baseCoords + corner, int3(0, 0, 0), maxProbeCoords);
+        uint probeIndex = DDGIProbeIndex(coords, counts);
+        bool maskMatch = (probeMasks[probeIndex] & pointMask) != 0u;
+        float trilinearWeight = DDGITrilinearWeight(corner, cellFraction);
 
-        //一维索引
-        uint probeIndex = (idx.z * counts.y + idx.y) * counts.x + idx.x;
+        float3 probePos = origin + float3(coords) * spacing + probeData[probeIndex].xyz;
+        float3 probeToBiasedPoint = P - probePos + visibilityBias;
+        float distanceToProbe = length(probeToBiasedPoint) + 1e-4f;
+        float3 moments = SampleProbeDistance(probeIndex, probeToBiasedPoint / distanceToProbe);
 
-        //计算Mask
-        uint probeMask = probeMasks[probeIndex];
-        bool maskMatch = (probeMask & pointMask) != 0u;
-        
-        // 三线性权重单独保存，最后再乘（官方顺序）
-        float3 w3 = lerp(1.0f - f, f, float3(corner));
-        float trilinearW = w3.x * w3.y * w3.z;
-
-          // 探针位置 = 格点 + relocation 偏移；三线性权重仍按格点算（与 RTXGI 一致）
-        float3 probePos = origin + float3(idx) * spacing + probeData[probeIndex].xyz;
-
-        // 可见性查询用偏置后的点
-        float3 probeToPoint = P - probePos + visibilityBias;
-        float dist = length(probeToPoint) + 1e-4f;
-        float3 dirToProbe = -probeToPoint / dist;
-
-        // 背面测试用未偏置方向（补充代码里也是这么做的）
-        float3 trueDirToProbe = normalize(probePos - P);
-
-
-        // 探针质量权重从 1 开始，不包含三线性
-        float weight = 1.0f;
-
-        // 1. wrap shading  背面剔除
-        float wrap = saturate((dot(trueDirToProbe, N) + 1.0f) * 0.5f);
-        weight *= (wrap * wrap) + 0.2f;
-
-        // 2. 有效性（软权重）
-        float3 moments = SampleProbeDistance(probeIndex, -dirToProbe);
-        weight *= moments.z;
-        
-        // 调试：有效探针计数
         if (moments.z > 0.5f)
             validCount += 1.0f;
 
-        float rawMean = moments.x;
-        float rawMean2 = moments.y;
-
-        // VSM 里 mean² - mean2 可能为负，用 abs；再加 variance bias 平滑
-        const float varianceBias = 0.02f;
-        float variance = abs(rawMean * rawMean - rawMean2) + varianceBias;
-
-        // Chebyshev bias：稍微抬高均值，减少薄墙/接触处的误遮挡
-        const float chebyshevBias = 0.07f;
-        float mean = max(rawMean + chebyshevBias, 0.0f);
-
-        float cheb = 1.0f;
-        if (dist > mean)
-        {
-            float d = dist - mean;                  //这样写的原因是为了让物体在距离探针mean左右能连续
-            cheb = variance / (variance + d * d);
-        }
-
-        // 提高对比度：三次方；不要 0.05 下限
-        // 3.切比雪夫
-        cheb = max(cheb * cheb * cheb, 0.05f);
-       // weight *= cheb;
-
-
-        // 4. 避免为零
+        float visibility = DDGIChebyshevWeight(moments.xy, distanceToProbe);
+        float weight = DDGIWrapWeight(probePos - P, N);
+        weight *= moments.z;
+        weight *= visibility;
         weight = max(1e-6f, weight);
-       
-        // 5. crush 小权重（只作用在质量权重上）
+
+        // 先压低质量较差的探针权重，再乘格内插值权重。
         const float crushThreshold = 0.05f;
         if (weight < crushThreshold)
             weight *= (weight * weight) * (1.0f / (crushThreshold * crushThreshold));
 
-        // 不同 volume 的 probe 不参与插值
         if (!maskMatch)
             weight = 0.0f;
-        
-        // 6. 最后乘三线性权重
-        weight *= trilinearW;
-        
-        // 必须放在三线性之后，这样 chebAvg 反映的是最终权重下的平均可见性
-        chebWeighted += cheb * weight;
-        
-        // debug 15：只保留三线性权重，验证 E 本身是否连续
-        if (g_Lighting.debugMode == 15)
+
+        weight *= trilinearWeight;
+        visibilitySum += visibility * weight;
+
+        // 调试模式 15 用格内权重单独显示辐照度。
+        if (trilinearOnly)
+            weight = trilinearWeight;
+
+        if (weight > dominantWeight)
         {
-            weight = trilinearW;
-        }
-        
-        
-        // 调试：记录主导探针和加权 Chebyshev
-        if (weight > dominantW)
-        {
-            dominantW = weight;
+            dominantWeight = weight;
             dominantProbe = probeIndex;
         }
 
-
-        // 测试bug是否与采样权重有关
-        //weight = 1.0f;
-        
-        // 按法线方向查该探针的 irradiance
-        float3 E = SampleProbeIrradiance(probeIndex, N);
-
-        irradiance += E * weight;
-        wsum += weight;
+        irradianceSum += SampleProbeIrradiance(probeIndex, N) * weight;
+        weightSum += weight;
     }
 
-    
-    // 线性加权平均
-    // cage 补位（两物体过近导致 cage 探针全失效时的兜底）
-    //   触发条件：8 个角的有效权重和 wsum < 0.02（正常场景 wsum 中位数约 0.56，不会触发）
-    //   A) 先用 fixup 补过的数据重算 8 个角：validity 视作 1、关掉 Chebyshev（距离矩不可信）
-    //   B) 8 个角也被 mask 全剔掉时，扩到 ±1 格子的 27 邻域，用反距离加权（保留 wrap/validity/Chebyshev）
-    if (wsum < 0.02f)
+    // 低权重时先重试当前八个角点，再查周围 27 个格点。
+    const float fallbackThreshold = 0.02f;
+    const float minFallbackWeight = 1e-5f;
+    if (weightSum < fallbackThreshold)
     {
-        float3 accA = float3(0.0f, 0.0f, 0.0f);
-        float accWA = 0.0f;
+        float3 fallbackIrradiance = 0.0f;
+        float fallbackWeight = 0.0f;
+
+        // Fixup 补过的辐照度可以参与插值，此处只应用 mask、朝向和格内权重。
         [unroll]
-        for (uint i2 = 0; i2 < 8; ++i2)
+        for (uint i = 0; i < 8; ++i)
         {
-            int3 corner2 = int3(i2 & 1, (i2 >> 1) & 1, (i2 >> 2) & 1);
-            int3 idx2 = clamp(int3(base) + corner2, int3(0, 0, 0), int3(counts) - 1);
-            uint p2 = (idx2.z * counts.y + idx2.y) * counts.x + idx2.x;
-            if ((probeMasks[p2] & pointMask) == 0u)
+            int3 corner = DDGICellCorner(i);
+            int3 coords = clamp(baseCoords + corner, int3(0, 0, 0), maxProbeCoords);
+            uint probeIndex = DDGIProbeIndex(coords, counts);
+            if ((probeMasks[probeIndex] & pointMask) == 0u)
                 continue;
 
-            // 三线性权重与主循环一致，保证空间连续
-            float3 w3b = lerp(1.0f - f, f, float3(corner2));
-            float tw = w3b.x * w3b.y * w3b.z;
-
-            float3 p2Pos = origin + float3(idx2) * spacing + probeData[p2].xyz;
-            float3 trueDir2 = normalize(p2Pos - P);
-            float wrap2 = saturate((dot(trueDir2, N) + 1.0f) * 0.5f);
-
-            float w2 = ((wrap2 * wrap2) + 0.2f) * tw;
-            accA += SampleProbeIrradiance(p2, N) * w2;
-            accWA += w2;
-        }
-        if (accWA > 1e-5f)
-        {
-            result.E = accA / accWA;
-            result.wsum = 1.0f;
-            result.validCount = 8.0f;
-            result.chebAvg = 1.0f;
-            result.dominantProbe = 0;
-            return result;
+            float3 probePos = origin + float3(coords) * spacing + probeData[probeIndex].xyz;
+            float weight = DDGIWrapWeight(probePos - P, N) * DDGITrilinearWeight(corner, cellFraction);
+            fallbackIrradiance += SampleProbeIrradiance(probeIndex, N) * weight;
+            fallbackWeight += weight;
         }
 
-        // B) 27 邻域兜底
-        float3 acc = float3(0.0f, 0.0f, 0.0f);
-        float accW = 0.0f;
-        int3 baseIdx = int3(floor(gridPos)) - 1;
-        [unroll]
-        for (int k = 0; k < 27; ++k)
+        if (!(fallbackWeight > minFallbackWeight))
         {
-            int3 off = int3(k % 3, (k / 3) % 3, k / 9);
-            int3 i2 = clamp(baseIdx + off, int3(0, 0, 0), int3(counts) - 1);
-            uint p2 = (i2.z * counts.y + i2.y) * counts.x + i2.x;
-            if ((probeMasks[p2] & pointMask) == 0u)
-                continue;
+            fallbackIrradiance = 0.0f;
+            fallbackWeight = 0.0f;
 
-            float3 p2Pos = origin + float3(i2) * spacing + probeData[p2].xyz;
-            float3 d2v = P - p2Pos;
-            float dist2 = max(length(d2v), 1e-3f);
-            float3 dirTo2 = -d2v / dist2;
-
-            float3 m2 = SampleProbeDistance(p2, dirTo2);
-
-            float3 trueDir2 = normalize(p2Pos - P);
-            float wrap2 = saturate((dot(trueDir2, N) + 1.0f) * 0.5f);
-            float w2 = (wrap2 * wrap2) + 0.2f;
-            w2 *= m2.z;
-
-            float var2 = abs(m2.x * m2.x - m2.y) + 0.02f;
-            float mean2 = max(m2.x + 0.07f, 0.0f);
-            float cheb2 = 1.0f;
-            if (dist2 > mean2)
+            [unroll]
+            for (int i = 0; i < 27; ++i)
             {
-                float dd = dist2 - mean2;
-                cheb2 = var2 / (var2 + dd * dd);
-            }
-            cheb2 = max(cheb2 * cheb2 * cheb2, 0.05f);
-            w2 *= cheb2;
-            w2 *= 1.0f / (1.0f + dist2 * dist2 * 4.0f);
+                int3 offset = int3(i % 3, (i / 3) % 3, i / 9) - 1;
+                int3 coords = clamp(baseCoords + offset, int3(0, 0, 0), maxProbeCoords);
+                uint probeIndex = DDGIProbeIndex(coords, counts);
+                if ((probeMasks[probeIndex] & pointMask) == 0u)
+                    continue;
 
-            acc += SampleProbeIrradiance(p2, N) * w2;
-            accW += w2;
+                float3 probePos = origin + float3(coords) * spacing + probeData[probeIndex].xyz;
+                float3 probeToPoint = P - probePos;
+                float distanceToProbe = max(length(probeToPoint), 1e-3f);
+                // 邻域兜底沿用未加偏置的点到探针方向。
+                float3 moments = SampleProbeDistance(probeIndex, -probeToPoint / distanceToProbe);
+
+                float weight = DDGIWrapWeight(probePos - P, N);
+                weight *= moments.z;
+                weight *= DDGIChebyshevWeight(moments.xy, distanceToProbe);
+                weight *= 1.0f / (1.0f + distanceToProbe * distanceToProbe * 4.0f);
+
+                fallbackIrradiance += SampleProbeIrradiance(probeIndex, N) * weight;
+                fallbackWeight += weight;
+            }
         }
-        if (accW > 1e-5f)
+
+        if (fallbackWeight > minFallbackWeight)
         {
-            result.E = acc / accW;
-            result.wsum = 1.0f;
-            result.validCount = 8.0f;
-            result.chebAvg = 1.0f;
-            result.dominantProbe = 0;
-            return result;
+            DDGISample fallback;
+            fallback.E = fallbackIrradiance / fallbackWeight;
+            fallback.wsum = 1.0f;
+            fallback.validCount = 8.0f;
+            fallback.chebAvg = 1.0f;
+            fallback.dominantProbe = 0;
+            return fallback;
         }
     }
-    
-    // 8 个 cage probe 全被筛掉/全无效时，退回环境光，避免纯黑阶跃
-    if (wsum < 1e-4f)
-        result.E = ambient.rgb;
-    else
-        result.E = irradiance / max(wsum, 1e-5f);
 
-
-    result.wsum = wsum;
+    DDGISample result;
+    result.E = weightSum < 1e-4f ? ambient.rgb : irradianceSum / max(weightSum, 1e-5f);
+    result.wsum = weightSum;
     result.validCount = validCount;
-    result.chebAvg = chebWeighted / max(wsum, 1e-5f);
+    result.chebAvg = visibilitySum / max(weightSum, 1e-5f);
     result.dominantProbe = dominantProbe;
     return result;
 }
-    
 
 // 探针 index → 彩色，用于 debug 14
 float3 ProbeDebugColor(uint x)
@@ -430,13 +367,6 @@ float4 LightingPS(LightingVSOut pin) : SV_Target
     }
 
     
-    // debug 8：DDGI 8 探针插值结果（除以 π 便于和直射比较亮度）
-    if (g_Lighting.debugMode == 8)
-    {
-        DDGISample s = SampleDDGI(world.xyz, N, pixel, pointMask);
-        return float4(s.E, 1.0f);
-    }
-
     // debug 9：atlas 1:1 显示在左上角（验证 tile 布局）
     if (g_Lighting.debugMode == 9)
     {
@@ -478,8 +408,10 @@ float4 LightingPS(LightingVSOut pin) : SV_Target
         return float4(m.x / 10.0f, saturate(m.y / 100.0f), m.z, 1.0f);
     }
 
-        // 采样一次，debug 11~14 和 final 共用
-DDGISample ddgi = SampleDDGI(world.xyz, N, pixel, pointMask);
+    DDGISample ddgi = SampleDDGI(world.xyz, N, pointMask);
+
+    if (g_Lighting.debugMode == 8 || g_Lighting.debugMode == 15)
+        return float4(ddgi.E, 1.0f);
 
     // debug 17：DDGI only（albedo × DDGI）
     if (g_Lighting.debugMode == 17)
@@ -509,12 +441,6 @@ DDGISample ddgi = SampleDDGI(world.xyz, N, pixel, pointMask);
     // debug 14：权重最大的探针 index（看格子边界）
     if (g_Lighting.debugMode == 14)
         return float4(ProbeDebugColor(ddgi.dominantProbe), 1.0f);
-    
-    if (g_Lighting.debugMode == 15)
-    {
-        DDGISample s = SampleDDGI(world.xyz, N, pixel, pointMask);
-        return float4(s.E, 1.0f);
-    }
     
         // debug 19：探针位置可视化（粉色小球）
     if (g_Lighting.debugMode == 19)

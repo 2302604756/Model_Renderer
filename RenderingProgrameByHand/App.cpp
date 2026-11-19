@@ -193,6 +193,12 @@ void App::init(HWND hwnd) {
 		"ProbeDistanceAtlas", m_probeGrid.GetDistanceResource(),
 		D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
+	// 滤波矩 
+	m_probeFilteredAtlasId = m_graph.RegisterResource(
+		"ProbeFilteredAtlas",
+		m_probeGrid.GetFilteredResource(),
+		D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
 	// ---- probe compute 根签名 ----
 	m_probeRootSignature = RootSignatureBuilder()
 		.Add32BitConstants(16, 4)   // b4: ProbeUpdateParams
@@ -267,8 +273,6 @@ void App::init(HWND hwnd) {
 		m_probeDistanceId, m_probeRayBufferId);
 
 
-
-
 	// ---- BorderFixup PSO（两个实例共用）----
 	auto borderCsBlob = d3d12lite::CompileShaderSM66(
 		L"ShadersProbe.hlsl", L"BorderFixupCS", L"cs_6_6");
@@ -280,11 +284,17 @@ void App::init(HWND hwnd) {
 
 	// irradiance 的 gutter
 	m_probeBorderFixupPass.Init(
-		m_probeRootSignature.Get(), m_probeBorderPSO.Get(),
-		m_probeGridId, m_probeGrid.GetResource(),
-		probeDesc.countX, probeDesc.countY, probeDesc.countZ,
-		m_probeGrid.GetUAVIndex(), ProbeGrid::kTileStride,
-		m_probeGrid.GetAtlasWidth(), m_probeGrid.GetAtlasHeight());
+		m_probeRootSignature.Get(),
+		m_probeBorderPSO.Get(),
+		m_probeFilteredAtlasId,
+		m_probeGrid.GetFilteredResource(),
+		probeDesc.countX,
+		probeDesc.countY,
+		probeDesc.countZ,
+		m_probeGrid.GetFilteredUAVIndex(),
+		ProbeGrid::kTileStride,
+		m_probeGrid.GetAtlasWidth(),
+		m_probeGrid.GetAtlasHeight());
 
 	// distance 的 gutter
 	m_probeDistanceBorderPass.Init(
@@ -306,6 +316,29 @@ void App::init(HWND hwnd) {
 		m_probeFixupPSO.Get(),
 		&m_probeGrid,
 		m_probeGridId,
+		m_probeDistanceId);
+
+	// ---- ProbeFilterPass
+	auto spatialFilterBlob = d3d12lite::CompileShaderSM66(
+		L"ShadersProbe.hlsl",
+		L"ProbeSpatialFilterCS",
+		L"cs_6_6");
+
+	assert(!spatialFilterBlob.empty());
+
+	m_probeSpatialFilterPSO =
+		PipelineBuilder().BuildCompute(
+			device,
+			m_probeRootSignature.Get(),
+			spatialFilterBlob);
+
+	m_probeSpatialFilterPass.Init(
+		m_probeRootSignature.Get(),
+		m_probeSpatialFilterPSO.Get(),
+		&m_probeGrid,
+		m_probeGrid.GetFilteredResource(),
+		m_probeGridId,
+		m_probeFilteredAtlasId,
 		m_probeDistanceId);
 
 	// ---- ProbeRelocation PSO（帧末更新下帧使用的探针偏移）----
@@ -356,13 +389,13 @@ void App::init(HWND hwnd) {
 		m_gbufferAlbedoId, m_gbufferNormalId, m_depthId,
 		m_depthBindlessIndex,
 		m_computeTexture.GetBindlessIndex(),
-		m_probeGridId,
+		m_probeFilteredAtlasId,
 		m_probeGrid.GetDesc().origin,
 		m_probeGrid.GetDesc().spacing,
 		m_probeGrid.GetDesc().countX,
 		m_probeGrid.GetDesc().countY,
 		m_probeGrid.GetDesc().countZ,
-		m_probeGrid.GetSRVIndex(),
+		m_probeGrid.GetFilteredSRVIndex(),
 		m_probeDistanceId,                          // 距离矩资源 id
 		m_probeGrid.GetDistanceSRVIndex(),			// 距离矩 SRV 槽
 		m_gbufferVolumeMaskId,
@@ -400,8 +433,8 @@ void App::RenderTick() {
 	if (m_input.IsKeyDown('0')) m_debugMode = 9;   // atlas 布局
 	if (m_input.IsKeyDown('P')) m_debugMode = 10;  // 距离矩 atlas
 	if (m_input.IsKeyDown('T')) m_debugMode = 15;  // 
-	if (m_input.IsKeyDown('V')) m_debugMode = 19;   // 探针位置
-	if (m_input.IsKeyDown('R')) m_probeRelocationPass.Reset();	// 重新收敛探针位置
+	if (m_input.IsKeyDown('V')) m_debugMode = 19;  // 探针位置
+	if (m_input.IsKeyDown('R')) m_resetProbeHistory = true;	// 重新收敛探针位置
 
 	// 先 BeginFrame：它会等待当前帧槽位 3 帧前的 fence
 	m_context.BeginFrame();
@@ -483,6 +516,8 @@ void App::RenderTick() {
 	ctx.lightCount = static_cast<uint32_t>(m_gpuLights.size());
 	ctx.debugMode = m_debugMode;
 	ctx.backbufferRtv = rtvHandle;
+	ctx.probeFrameIndex = m_resetProbeHistory ? 0u : m_probeFrameIndex;
+	ctx.resetProbeHistory = m_resetProbeHistory;
 	// App 是组合根：每帧解析一次 bindings，Pass 只读 ctx.bindings
 	// 每帧解析一次，Pass 不再关心数据来自哪个模块
 	ctx.bindings.objectDataBindlessIndex =
@@ -500,13 +535,15 @@ void App::RenderTick() {
 	m_graph.AddPass(m_probeRayPass);          // 生成射线 + 求交
 	m_graph.AddPass(m_probeRayShadePass);     // 写 radiance
 	m_graph.AddPass(m_probeUpdatePass);       // 旧的 atlas 更新，暂时保留
-	m_graph.AddPass(m_probeBorderFixupPass);  // irradiance gutter
+
 	m_graph.AddPass(m_probeDistancePass);         // 距离矩更新
 	m_graph.AddPass(m_probeDistanceBorderPass);   // 距离矩 gutter
 	m_graph.AddPass(m_probeFixupPass);			// 物体内Probe修正
+	m_graph.AddPass(m_probeSpatialFilterPass);
+	m_graph.AddPass(m_probeBorderFixupPass);  // irradiance gutter
 	m_graph.AddPass(m_lightingPass);
 	// 帧末 relocation：本帧所有 pass 用旧 offset，写入的新 offset 下一帧生效
-	m_graph.AddPass(m_probeRelocationPass);
+	//m_graph.AddPass(m_probeRelocationPass);
 	
 
 	// 收尾：backbuffer 切回 PRESENT（空执行，只用于插屏障）
@@ -518,6 +555,14 @@ void App::RenderTick() {
 		[](RenderGraph::FrameContext&) {});
 
 	m_graph.Execute(ctx);
+
+	if (m_resetProbeHistory) {
+		m_probeFrameIndex = 1;
+		m_resetProbeHistory = false;
+	}
+	else {
+		++m_probeFrameIndex;
+	}
 	
 	//=================================================================================================================================
 	auto recordEnd = std::chrono::high_resolution_clock::now();

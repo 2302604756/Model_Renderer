@@ -43,6 +43,7 @@ struct Vertex
 ConstantBuffer<PerObjectData> g_Object : register(b0);
 ConstantBuffer<PerFrameData> g_Frame : register(b1);
 sampler g_LinearSampler : register(s0);
+sampler g_ClampSampler : register(s1);
 
 // ---- b3：太阳 / 天空 / 环境 ----
 cbuffer LightingCB : register(b3)

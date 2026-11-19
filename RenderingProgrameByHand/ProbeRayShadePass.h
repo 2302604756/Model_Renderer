@@ -24,5 +24,4 @@ private:
     ProbeGrid* m_probeGrid = nullptr;
     ProbeRayBuffer* m_rayBuffer = nullptr;
     RenderGraph::ResourceId m_rayBufferId = RenderGraph::kInvalidId;
-    uint32_t             m_frameIndex = 0;
 };

@@ -16,7 +16,7 @@ public:
         RenderGraph::ResourceId depthId,
         uint32_t depthBindlessIndex,
         uint32_t computeTextureIndex,
-        RenderGraph::ResourceId probeGridId,
+        RenderGraph::ResourceId probeFilteredAtlasId,
         const DirectX::XMFLOAT3& gridOrigin,
         float gridSpacing,
         uint32_t gridCountX, uint32_t gridCountY, uint32_t gridCountZ,
@@ -50,7 +50,7 @@ private:
 
 
     //探针pass
-    RenderGraph::ResourceId m_probeGridId = RenderGraph::kInvalidId;
+    RenderGraph::ResourceId m_probeFilteredAtlasId = RenderGraph::kInvalidId;
     DirectX::XMFLOAT3       m_gridOrigin{};
     float                   m_gridSpacing = 1.0f;
     uint32_t                m_gridCountX = 0, m_gridCountY = 0, m_gridCountZ = 0;

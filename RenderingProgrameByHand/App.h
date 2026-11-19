@@ -31,6 +31,7 @@
 #include "ProbeRayShadePass.h"
 #include "ProbeFixupPass.h"
 #include "ProbeRelocationPass.h"
+#include "ProbeSpatialFilterPass.h"
 
 
 //CPU端与GPU端场景数据构建
@@ -127,6 +128,9 @@ private:
 	std::vector<RenderGraph::ResourceId> m_backbufferIds;
 
 	//探针Pass
+	uint32_t					m_probeFrameIndex = 0;
+	bool						m_resetProbeHistory = false;
+
 	ProbeGrid					m_probeGrid;
 	ProbeUpdatePass				m_probeUpdatePass;
 	ComPtr<ID3D12RootSignature> m_probeRootSignature;
@@ -148,8 +152,12 @@ private:
 	ProbeFixupPass m_probeFixupPass;
 	ComPtr<ID3D12PipelineState> m_probeFixupPSO;
 	// 探针重定位（帧末更新下帧使用的偏移）
-	ProbeRelocationPass m_probeRelocationPass;
+	ProbeRelocationPass			m_probeRelocationPass;
 	ComPtr<ID3D12PipelineState> m_probeRelocationPSO;
+	ProbeSpatialFilterPass		m_probeSpatialFilterPass;
+	ComPtr<ID3D12PipelineState> m_probeSpatialFilterPSO;
+	RenderGraph::ResourceId		m_probeFilteredAtlasId = RenderGraph::kInvalidId;
+
 
 	//用于窗口状态刷新
 	HWND                                                 m_hwnd = nullptr;

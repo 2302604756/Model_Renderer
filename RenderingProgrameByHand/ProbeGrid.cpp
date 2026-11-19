@@ -14,6 +14,13 @@ void ProbeGrid::Init(ID3D12Device* device, GPUDescriptorAllocator& bindless, con
         GetDistanceAtlasWidth(), GetDistanceAtlasHeight(),
         DXGI_FORMAT_R16G16B16A16_FLOAT);
 
+    m_filteredAtlas.InitUAV(
+        device,
+        bindless,
+        GetAtlasWidth(),
+        GetAtlasHeight(),
+        DXGI_FORMAT_R11G11B10_FLOAT);
+
     const uint32_t probeCount = m_desc.GetProbeCount();
     const uint64_t bytes =
         static_cast<uint64_t>(probeCount) * sizeof(DirectX::XMFLOAT4);

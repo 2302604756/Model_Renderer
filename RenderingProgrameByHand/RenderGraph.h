@@ -23,8 +23,10 @@ public:
 
     struct FrameContext {
         uint32_t                    frameIndex = 0;
-        ID3D12GraphicsCommandList*  cmdList = nullptr;
+        uint32_t                    probeFrameIndex = 0;
+        bool                        resetProbeHistory = false;
 
+        ID3D12GraphicsCommandList*  cmdList = nullptr;
         D3D12_GPU_VIRTUAL_ADDRESS   frameConstantsAddress = 0;    // b1
         D3D12_GPU_VIRTUAL_ADDRESS   lightingConstantsAddress = 0; // b3
         D3D12_GPU_VIRTUAL_ADDRESS   lightBufferAddress = 0;       // t5
@@ -96,4 +98,6 @@ private:
     std::vector<ResourceEntry> m_resources;                                         //在初始化Init阶段 RegisterResource把东西填入到m_resources
                                                                                     //Write/Read往usage中写入的就是m_resources的id，在最后执行时去根据ID来对相应的资源进行Barrier
     std::vector<PassEntry>     m_passes;                                            //在AddPass构建时把Pass信息传入
+
+  
 };

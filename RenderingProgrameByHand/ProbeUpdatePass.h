@@ -25,7 +25,6 @@ private:
     ID3D12PipelineState* m_pso = nullptr;
     ProbeGrid* m_probeGrid = nullptr;
     RenderGraph::ResourceId m_probeGridId = RenderGraph::kInvalidId;
-    uint32_t                m_frameIndex = 0;   // 单调帧号（累积用）
     ProbeRayBuffer* m_rayBuffer = nullptr;
     RenderGraph::ResourceId m_rayBufferId = RenderGraph::kInvalidId;
 };

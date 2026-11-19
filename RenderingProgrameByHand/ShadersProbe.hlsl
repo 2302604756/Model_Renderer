@@ -13,7 +13,7 @@ struct ProbeUpdateParams
 ConstantBuffer<ProbeUpdateParams> g_Probe : register(b4);
 
 // fixed rays：方向每帧固定（只随探针旋转一次），只用于 relocation / classification
-#define PROBE_FIXED_RAY_COUNT 0u
+#define PROBE_FIXED_RAY_COUNT 32u
 
 // SV_DispatchThreadID是从0-63
 [numthreads(8, 8, 1)]
@@ -290,6 +290,143 @@ void ProbeFixupCS(uint3 groupId : SV_GroupID,
 }
 
 
+[numthreads(8, 8, 1)]
+void ProbeSpatialFilterCS(
+    uint3 groupId : SV_GroupID,
+    uint3 gtid : SV_GroupThreadID)
+{
+    uint probeIndex = groupId.x;
+    uint3 counts = uint3(
+        g_Probe.countX,
+        g_Probe.countY,
+        g_Probe.countZ);
+
+    if (probeIndex >= g_Probe.probeCount)
+        return;
+
+    uint px = probeIndex % counts.x;
+    uint py = (probeIndex / counts.x) % counts.y;
+    uint pz = probeIndex / (counts.x * counts.y);
+
+    const uint irrStride = 10;
+    const uint distStride = 18;
+
+    uint2 local = gtid.xy;
+    uint2 dstPixel = uint2(
+        px * irrStride + 1 + local.x,
+        (py + pz * counts.y) * irrStride + 1 + local.y);
+
+    Texture2D<float4> rawAtlas =
+        ResourceDescriptorHeap[g_Lighting.gridCountsAndProbeIndex.w];
+
+    Texture2D<float4> distAtlas =
+        ResourceDescriptorHeap[g_Lighting.distanceAtlasIndex];
+
+    RWTexture2D<float4> filteredAtlas =
+        ResourceDescriptorHeap[g_Probe.irradianceUav];
+
+    StructuredBuffer<uint> probeMasks =
+        ResourceDescriptorHeap[probeMaskIndex];
+
+    // 8×8 irradiance 方向对应 16×16 distance 方向。
+    // 8×8 texel 中心精确映射到 16×16 的奇数 texel。
+    uint2 distLocal = min(
+        uint2((float2(local) + 0.5f) * 2.0f),
+        uint2(15, 15));
+
+    uint2 centerDistPixel = uint2(
+        px * distStride + 1 + distLocal.x,
+        (py + pz * counts.y) * distStride + 1 + distLocal.y);
+
+    float3 centerRgb =
+        rawAtlas.Load(int3(dstPixel, 0)).rgb;
+
+    float4 centerMoments =
+        distAtlas.Load(int3(centerDistPixel, 0));
+
+    uint selfMask = probeMasks[probeIndex];
+    if (selfMask == 0u)
+    {
+        filteredAtlas[dstPixel] =
+            float4(centerRgb, 1.0f);
+        return;
+    }
+
+    const float centerWeight = 2.5f;
+    float3 sum = centerRgb * centerWeight;
+    float wsum = centerWeight;
+
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                if (dx == 0 && dy == 0 && dz == 0)
+                    continue;
+
+                int3 n = int3(px, py, pz) + int3(dx, dy, dz);
+                if (any(n < int3(0, 0, 0)) ||
+            any(n >= int3(counts)))
+                {
+                    continue;
+                }
+
+                uint nIndex =
+            (n.z * counts.y + n.y) * counts.x + n.x;
+
+                if ((probeMasks[nIndex] & selfMask) == 0u)
+                    continue;
+
+                uint2 nRawPixel = uint2(
+            n.x * irrStride + 1 + local.x,
+            (n.y + n.z * counts.y) * irrStride +
+                1 + local.y);
+
+                uint2 nDistPixel = uint2(
+            n.x * distStride + 1 + distLocal.x,
+            (n.y + n.z * counts.y) * distStride +
+                1 + distLocal.y);
+
+                float4 nMoments =
+            distAtlas.Load(int3(nDistPixel, 0));
+
+                if (nMoments.z < 0.1f)
+                    continue;
+
+                float3 delta = float3(dx, dy, dz);
+                float spatialW = exp(
+            -dot(delta, delta) /
+            (2.0f * 0.8f * 0.8f));
+
+                float referenceDepth =
+            max(centerMoments.x, g_Probe.spacing);
+
+                float relativeDepth =
+            abs(nMoments.x - centerMoments.x) /
+            max(0.20f * referenceDepth, 1e-4f);
+
+                float depthW =
+            exp(-relativeDepth * relativeDepth);
+
+                float w =
+            spatialW *
+            depthW *
+            saturate(nMoments.z);
+
+                float3 nRgb =
+            rawAtlas.Load(int3(nRawPixel, 0)).rgb;
+
+                sum += nRgb * w;
+                wsum += w;
+            }
+
+    float3 filtered = wsum > 1e-5f
+        ? sum / wsum
+        : centerRgb;
+
+    filteredAtlas[dstPixel] =
+        float4(filtered, 1.0f);
+}
+
 
 // 1. ProbeRayCS：每个线程一条 Fibonacci 射线
 //    线程总数 = probeCount * rayCount
@@ -319,31 +456,29 @@ void ProbeRayCS(uint3 id : SV_DispatchThreadID)
                     + float3(px, py, pz) * g_Probe.spacing
                     + probeData[probeIndex].xyz;
 
-    // 每探针 + 每帧随机旋转的 Fibonacci 方向
+    // 每帧随机旋转的 Fibonacci 方向
     // fixed ray不参与旋转
     const uint fixedRays = PROBE_FIXED_RAY_COUNT;
     const uint randomRays = rayCount - fixedRays;
 
-    float2 baseRot = float2(
-    Hash01(uint2(px, py), probeIndex),
-    Hash01(uint2(pz, py), probeIndex + 1u));
+    float2 frameRotation = frac(float2(
+    0.5f + frameIndex * 0.6180339887f,
+    0.5f + frameIndex * 0.754877666f));
 
     float3 dir;
     if (rayIndex < fixedRays)
     {
-    // fixed rays：方向不随 frameIndex 变化，给 relocation 用
-        dir = StochasticFibonacci(rayIndex, fixedRays, baseRot);
+        dir = StochasticFibonacci(
+        rayIndex,
+        fixedRays,
+        float2(0.0f, 0.0f));
     }
     else
     {
-        float2 rot = frac(baseRot + float2(
-        frameIndex * 0.6180339887f,
-        frameIndex * 0.754877666f));
-
         dir = StochasticFibonacci(
         rayIndex - fixedRays,
         randomRays,
-        rot);
+        frameRotation);
     }
 
     // 射线求交
@@ -479,10 +614,9 @@ void ProbeTexelUpdateCS(uint3 id : SV_DispatchThreadID)
 
     RWTexture2D<float4> atlas = ResourceDescriptorHeap[g_Probe.irradianceUav];
     float3 old = atlas[pixel].rgb;
-    float3 diff = abs(irradiance - old);
-    float alpha = (frameIndex == 0) ? 1.0f : 0.05f;
-    if (max(diff.r, max(diff.g, diff.b)) > 0.15f) alpha = 0.5f;
-    atlas[pixel] = float4(lerp(old.rgb, irradiance, alpha), 1.0f);
+    const float hysteresis = 0.98f;
+    float alpha = (frameIndex == 0u) ? 1.0f : (1.0f - hysteresis);
+    atlas[pixel] = float4( lerp(old.rgb, irradiance, alpha), 1.0f);
 }
 
 // ProbeDistanceMomentsCS：用同一批 ray 的 hitT 更新距离矩 atlas
@@ -599,12 +733,12 @@ void ProbeDistanceMomentsCS(uint3 id : SV_DispatchThreadID,
 
     RWTexture2D<float4> distAtlas = ResourceDescriptorHeap[g_Probe.distanceUav];
     float4 old = distAtlas[pixel];
-    float alpha = (frameIndex == 0u) ? 1.0f : 0.05f;
+    float alpha = (frameIndex == 0u) ? 1.0f : 0.02f;
 
     
     float prevValid = old.z;
     // 失效快一点，恢复慢一点，避免鬼影
-    float validAlpha = (frameIndex == 0) ? 1.0f : 0.05f;
+    float validAlpha = (frameIndex == 0u) ? 1.0f : 0.02f;
     float valid = lerp(prevValid, targetValid, validAlpha);
     
     distAtlas[pixel] = float4(

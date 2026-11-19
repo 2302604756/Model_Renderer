@@ -35,7 +35,7 @@ void ProbeRayShadePass::Execute(RenderGraph::FrameContext& ctx)
     p.countX = grid.countX;
     p.countY = grid.countY;
     p.countZ = grid.countZ;
-    p.frameIndex = m_frameIndex++;
+    p.frameIndex = ctx.probeFrameIndex;
     p.probeCount = grid.GetProbeCount();
     p.rayCount = ProbeRayBuffer::kRayCount;
     p.rayBufferUav = m_rayBuffer->GetUAVIndex();

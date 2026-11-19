@@ -180,6 +180,9 @@
     <ClCompile Include="ProbeRelocationPass.cpp">
       <Filter>探针</Filter>
     </ClCompile>
+    <ClCompile Include="ProbeSpatialFilterPass.cpp">
+      <Filter>探针</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CPUDescriptorAllocator.h">
@@ -321,6 +324,9 @@
       <Filter>探针</Filter>
     </ClInclude>
     <ClInclude Include="ProbeRelocationPass.h">
+      <Filter>探针</Filter>
+    </ClInclude>
+    <ClInclude Include="ProbeSpatialFilterPass.h">
       <Filter>探针</Filter>
     </ClInclude>
   </ItemGroup>

@@ -151,6 +151,7 @@
     <ClCompile Include="ProbeRayPass.cpp" />
     <ClCompile Include="ProbeRayShadePass.cpp" />
     <ClCompile Include="ProbeRelocationPass.cpp" />
+    <ClCompile Include="ProbeSpatialFilterPass.cpp" />
     <ClCompile Include="ProbeUpdatePass.cpp" />
     <ClCompile Include="RenderContext.cpp" />
     <ClCompile Include="RenderGraph.cpp" />
@@ -202,6 +203,7 @@
     <ClInclude Include="ProbeRayPass.h" />
     <ClInclude Include="ProbeRayShadePass.h" />
     <ClInclude Include="ProbeRelocationPass.h" />
+    <ClInclude Include="ProbeSpatialFilterPass.h" />
     <ClInclude Include="ProbeTypes.h" />
     <ClInclude Include="ProbeUpdatePass.h" />
     <ClInclude Include="ProbeVolume.h" />

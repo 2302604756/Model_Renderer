@@ -10,7 +10,7 @@ void LightingPass::Init(ID3D12PipelineState* pso,
     RenderGraph::ResourceId depthId,
     uint32_t depthBindlessIndex,
     uint32_t computeTextureIndex,
-    RenderGraph::ResourceId probeGridId,
+    RenderGraph::ResourceId probeFilteredAtlasId,
     const DirectX::XMFLOAT3& gridOrigin,
     float gridSpacing,
     uint32_t gridCountX, uint32_t gridCountY, uint32_t gridCountZ,
@@ -32,7 +32,7 @@ void LightingPass::Init(ID3D12PipelineState* pso,
     m_computeTextureIndex = computeTextureIndex;
     
     //探针数据
-    m_probeGridId = probeGridId;
+    m_probeFilteredAtlasId = probeFilteredAtlasId;
     m_gridOrigin = gridOrigin;
     m_gridSpacing = gridSpacing;
     m_gridCountX = gridCountX;
@@ -55,7 +55,7 @@ void LightingPass::Declare(RenderGraph::PassBuilder& builder)
     builder.Read(m_normalId, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     builder.Read(m_depthId, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     builder.Write(m_backbufferId, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    builder.Read(m_probeGridId, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    builder.Read( m_probeFilteredAtlasId, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     builder.Read(m_probeDistanceAtlasId, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     builder.Read(m_volumeMaskId, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 }
