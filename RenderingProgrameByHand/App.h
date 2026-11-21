@@ -1,202 +1,71 @@
 #pragma once
-#include "d3d12lite.h"
-#include "RenderContext.h"
-#include "CPUDescriptorAllocator.h"
-#include "BindlessDescriptorHeap.h"
-#include "TransientHeap.h"
-#include "UploadHeap.h"
-#include "PipelineBuilder.h"
-#include "Texture2D.h"
-#include "RootSignature.h"
-#include "DepthBuffer.h"
-
-#include "Mesh.h"
-#include "Model.h"
-#include "MeshLibrary.h"
-#include "RenderTexture.h"
-#include "SceneTypes.h"
-#include "AccelerationStructure.h"
-
-//Pass
-#include "RenderGraph.h"
-#include "GBufferPass.h"
-#include "LightingPass.h"
-#include "ComputeSmokePass.h"
-#include "ProbeGrid.h"
-#include "ProbeUpdatePass.h"
-#include "ProbeBorderFixupPass.h"
-#include "ProbeDistancePass.h"
-#include "ProbeRayBuffer.h"
-#include "ProbeRayPass.h"
-#include "ProbeRayShadePass.h"
-#include "ProbeFixupPass.h"
-#include "ProbeRelocationPass.h"
-#include "ProbeSpatialFilterPass.h"
-
-
-//CPU端与GPU端场景数据构建
-#include "Scene.h"
-#include "SceneGpuData.h"
-#include "LightingTypes.h" 
-//动态场景
-#include "DemoController.h"
-#include "TLASUpdatePass.h"
-
 
 #include "Camera.h"
+#include "DemoController.h"
+#include "GiTypes.h"
 #include "Input.h"
+#include "Scene.h"
 
-#include <DirectXMath.h>
-#include <chrono>						//用于高精度计时 测量FPS
-#include <vector>
+#include <chrono>
+#include <cstdint>
+#include <memory>
 
+class Renderer;
 
-//用一层应用层去包裹
-//持有 pso，heap,,rendercontext,descriptor heap
-//
-
-
-
+// 应用层接收 Win32 输入、更新相机和 CPU 场景，并把每帧渲染交给 Renderer。
 class App {
 public:
-	App() = default;
-	//禁止拷贝
-	App(const App& app) = delete;
-	App operator=(const App& app) = delete;
+    // 构造和析构放在 App.cpp，保证销毁 unique_ptr 时 Renderer 已完整定义。
+    App();
+    ~App();
 
-	void init(HWND hwnd);
-	//每帧调度渲染函数
-	void RenderTick();
+    // App 独占场景和渲染器。Renderer 与 DemoController 会借用场景。
+    App(const App&) = delete;
+    App& operator=(const App&) = delete;
 
-	// WindowProc 转发输入
-	void OnKeyDown(WPARAM key) { m_input.OnKeyDown(key); }
-	void OnKeyUp(WPARAM key) { m_input.OnKeyUp(key); }
-	void OnFocusLost() { m_input.OnFocusLost(); }
-	void OnMouseMove(int x, int y) { m_input.OnMouseMove(x, y); }
-	void OnMouseButtonDown(int x, int y) { m_input.OnMouseButtonDown(x, y); }
-	void OnMouseButtonUp() { m_input.OnMouseButtonUp(); }
+    // WinMain 创建窗口后调用。Renderer 先构建场景，随后演示控制器绑定场景物体。
+    void init(HWND hwnd);
+    // 消息队列空闲时推进一帧，依次处理输入、更新场景和提交渲染。
+    void RenderTick();
+    // 退出消息循环后调用，先完成已提交的 GPU 工作，再销毁 Renderer。
+    void Shutdown();
 
+    // WindowProc 更新输入状态，RenderTick 在帧开始时读取这些状态。
+    void OnKeyDown(WPARAM key) { m_input.OnKeyDown(key); }
+    void OnKeyUp(WPARAM key) { m_input.OnKeyUp(key); }
+    void OnFocusLost() { m_input.OnFocusLost(); }
+    void OnMouseMove(int x, int y) { m_input.OnMouseMove(x, y); }
+    void OnMouseButtonDown(int x, int y) { m_input.OnMouseButtonDown(x, y); }
+    void OnMouseButtonUp() { m_input.OnMouseButtonUp(); }
 
 private:
-	//与Camera的联系
-	CameraControl BuildCameraControl() const;
+    // 将按键和鼠标拖动增量转换为 Camera 使用的控制量。
+    CameraControl BuildCameraControl() const;
+    // 达到统计周期后更新窗口标题，并清理这一周期的累计值。
+    void UpdateFrameStats(float deltaTime);
 
+    // 声明顺序保证借用方先于 Scene 析构。
+    Scene m_scene;
+    std::unique_ptr<Renderer> m_renderer;
+    DemoController m_demoController;
+    Camera m_camera;
+    Input m_input;
 
-	// 渲染管线与几何资产
-	ComPtr<ID3D12RootSignature> m_rootSignature;
-	MeshLibrary					m_meshLibrary;		
-	Texture2D                   m_texture;			
-	DepthBuffer					m_depthBuffer;
+    HWND m_hwnd = nullptr;
+    RenderOptions m_renderOptions{}; // 分别选择漫反射、镜面算法和显示视图。
+    std::chrono::high_resolution_clock::time_point m_lastFrameTime;
 
-	//场景ID：该Mesh在m_meshLibrary中的vector<Mesh> 中的索引
-	uint32_t m_cubeMeshId = 0;
-	uint32_t m_sphereMeshId = 0;
-	uint32_t m_planeMeshId = 0;
-	uint32_t m_textureIndex = 0;
-	//帧ID
-	uint32_t m_frameCounter = 0;
-	RenderGraph::ResourceId m_gbufferVolumeMaskId = RenderGraph::kInvalidId;
-
-	//光追
-	rt::AccelerationScene       m_rtScene;
-
-	//CPU与GPU场景数据
-	Scene			 m_scene;
-	SceneGpuData	 m_sceneGpuData;
-	DemoController   m_demoController;
-
-	//光源
-	std::vector<GPULight> m_gpuLights;
-	LightingConstants     m_lightingConstants{};
-	void BuildLights();   // CPU Light → GPULight[] + LightingConstants
-
-
-	RenderTexture m_gbufferAlbedo;
-	RenderTexture m_gbufferNormal;
-	RenderTexture m_gbufferVolumeMask;
-	uint32_t      m_depthBindlessIndex = UINT32_MAX;
-
-
-	//Pass
-	RenderGraph           m_graph;
-	GBufferPass           m_gbufferPass;
-	LightingPass          m_lightingPass;
-
-	RenderGraph::ResourceId m_gbufferAlbedoId = RenderGraph::kInvalidId;
-	RenderGraph::ResourceId m_gbufferNormalId = RenderGraph::kInvalidId;
-	RenderGraph::ResourceId m_depthId = RenderGraph::kInvalidId;
-	std::vector<RenderGraph::ResourceId> m_backbufferIds;
-
-	//探针Pass
-	uint32_t					m_probeFrameIndex = 0;
-	bool						m_resetProbeHistory = false;
-
-	ProbeGrid					m_probeGrid;
-	ProbeUpdatePass				m_probeUpdatePass;
-	ComPtr<ID3D12RootSignature> m_probeRootSignature;
-	ComPtr<ID3D12PipelineState> m_probePSO;
-	RenderGraph::ResourceId     m_probeGridId = RenderGraph::kInvalidId;
-	ProbeBorderFixupPass		m_probeBorderFixupPass;
-	ComPtr<ID3D12PipelineState> m_probeBorderPSO;
-	ProbeDistancePass			m_probeDistancePass;          // 距离矩更新
-	ComPtr<ID3D12PipelineState> m_probeDistancePSO;   // 距离矩 PSO
-	RenderGraph::ResourceId     m_probeDistanceId = RenderGraph::kInvalidId;
-	ProbeBorderFixupPass		m_probeDistanceBorderPass;   // 距离矩 gutter
-	ProbeRayBuffer				m_probeRayBuffer;
-	ProbeRayPass				m_probeRayPass;
-	ProbeRayShadePass			m_probeRayShadePass;
-	ComPtr<ID3D12PipelineState> m_probeRayPSO;
-	ComPtr<ID3D12PipelineState> m_probeRayShadePSO;
-	RenderGraph::ResourceId     m_probeRayBufferId = RenderGraph::kInvalidId;
-	TLASUpdatePass				m_tlasUpdatePass;
-	ProbeFixupPass m_probeFixupPass;
-	ComPtr<ID3D12PipelineState> m_probeFixupPSO;
-	// 探针重定位（帧末更新下帧使用的偏移）
-	ProbeRelocationPass			m_probeRelocationPass;
-	ComPtr<ID3D12PipelineState> m_probeRelocationPSO;
-	ProbeSpatialFilterPass		m_probeSpatialFilterPass;
-	ComPtr<ID3D12PipelineState> m_probeSpatialFilterPSO;
-	RenderGraph::ResourceId		m_probeFilteredAtlasId = RenderGraph::kInvalidId;
-
-
-	//用于窗口状态刷新
-	HWND                                                 m_hwnd = nullptr;
-	std::chrono::high_resolution_clock::time_point       m_lastFrameTime;
-	uint32_t                                             m_fpsFrameCount = 0;
-	float                                                m_fpsTimeElapsed = 0.0f;
-	float												 m_recordCpuMsAccum = 0.0f;
-	uint32_t											 m_recordCpuSamples = 0;
-	float												 m_waitMsAccum = 0.0f;
-	float												 m_tickCpuMsAccum = 0.0f;
-	float												 m_beginMsAccum = 0.0f;
-	float												 m_executeMsAccum = 0.0f;
-	float												 m_presentMsAccum = 0.0f;
-	uint32_t											 m_waitHitCount = 0;
-
-	//基础设施
-	RenderContext			m_context;
-	CPUDescriptorAllocator  m_cpuAllocator;
-	GPUDescriptorAllocator  m_gpuAllocator;
-	TransientHeap           m_physicalHeap;
-	UploadHeap				m_uploadHeap;
-	PipelineBuilder			m_pipelineBuilder;
-
-	void UpdateFrameStats(float deltaTime);   
-
-	Camera m_camera;
-	Input  m_input;
-
-	//多pass pso
-	ComPtr<ID3D12PipelineState> m_gbufferPSO;
-	ComPtr<ID3D12PipelineState> m_lightingPSO;
-	uint32_t m_debugMode = 0;
-
-	//Compute Shader参数
-	ComPtr<ID3D12RootSignature> m_computeRootSignature;
-	ComPtr<ID3D12PipelineState> m_computePSO;
-
-	RenderTexture    m_computeTexture;
-	ComputeSmokePass m_computeSmokePass;
-
-	RenderGraph::ResourceId m_computeTextureId = RenderGraph::kInvalidId;
+    // 相邻帧的 CPU 时间间隔用于统计标题中的 FPS 和平均帧耗时。
+    uint32_t m_fpsFrameCount = 0;
+    float m_fpsTimeElapsed = 0.0f;
+    // 每次成功执行 RenderFrame 后累加一份 CPU 计时，WaitHit 记录发生帧槽等待的次数。
+    uint32_t m_recordCpuSamples = 0;
+    float m_recordCpuMsAccum = 0.0f;
+    float m_waitMsAccum = 0.0f;
+    float m_tickCpuMsAccum = 0.0f;
+    float m_beginMsAccum = 0.0f;
+    float m_executeMsAccum = 0.0f;
+    float m_presentMsAccum = 0.0f;
+    uint32_t m_waitHitCount = 0;
+    bool m_usingGpuUpload = false; // 最近一帧使用的上传堆类型，用于标题显示。
 };

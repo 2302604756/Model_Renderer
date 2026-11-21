@@ -1,4 +1,5 @@
 #include "ShadersCommon.hlsl"
+#include "GiPassBindings.hlsli"
 
 // =============================================================================
 // Lighting pass：TraceGI + 全屏三角形 + 最终着色
@@ -504,5 +505,94 @@ float4 LightingPS(LightingVSOut pin) : SV_Target
     float3 color = albedo.rgb * (direct + ambient.rgb + ddgi.E);
     color = saturate(color);
     color += Dither8(pixel); // ±0.5 LSB 抖动，消除色阶断层
+    return float4(color, 1.0f);
+}
+
+struct DeferredGiSurface
+{
+    float3 position;
+    float3 normal;
+    float3 albedo;
+    bool valid;
+};
+
+DeferredGiSurface LoadDeferredGiSurface(LightingVSOut pin)
+{
+    DeferredGiSurface surface = (DeferredGiSurface) 0;
+    Texture2D<float> depthTex = ResourceDescriptorHeap[g_Lighting.depthIndex];
+    float depth = depthTex.Load(int3(uint2(pin.position.xy), 0));
+    // 当前正向深度以 1 清屏。背景在标准 HDR 结果中写零。
+    if (depth >= 1.0f)
+        return surface;
+
+    Texture2D<float4> albedoTex = ResourceDescriptorHeap[g_Lighting.albedoIndex];
+    Texture2D<float4> normalTex = ResourceDescriptorHeap[g_Lighting.normalIndex];
+    float2 ndc = pin.uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
+    float4 world = mul(g_Frame.invViewProj, float4(ndc, depth, 1.0f));
+    surface.position = world.xyz / world.w;
+    surface.normal = normalize(normalTex.SampleLevel(g_LinearSampler, pin.uv, 0.0f).xyz);
+    surface.albedo = albedoTex.SampleLevel(g_LinearSampler, pin.uv, 0.0f).rgb;
+    surface.valid = true;
+    return surface;
+}
+
+float4 DirectLightingPS(LightingVSOut pin) : SV_Target
+{
+    DeferredGiSurface surface = LoadDeferredGiSurface(pin);
+    if (!surface.valid)
+        return 0.0f;
+
+    // 延续现有的直接光与环境项。中间纹理保留线性 HDR。
+    float3 direct = EvaluateDirectLighting(surface.position, surface.normal);
+    return float4(surface.albedo * (direct + ambient.rgb), 1.0f);
+}
+
+float4 DDGIResolvePS(LightingVSOut pin) : SV_Target
+{
+    DeferredGiSurface surface = LoadDeferredGiSurface(pin);
+    if (!surface.valid)
+        return 0.0f;
+
+    Texture2D<uint> volumeMaskTex = ResourceDescriptorHeap[volumeMaskIndex];
+    uint pointMask = volumeMaskTex.Load(int3(uint2(pin.position.xy), 0));
+    DDGISample sample = SampleDDGI(surface.position, surface.normal, pointMask);
+    return float4(surface.albedo * sample.E, 1.0f);
+}
+
+float4 RayTracedDiffusePS(LightingVSOut pin) : SV_Target
+{
+    DeferredGiSurface surface = LoadDeferredGiSurface(pin);
+    if (!surface.valid)
+        return 0.0f;
+
+    float3 incoming = TraceGIMulti(surface.position, surface.normal, uint2(pin.position.xy));
+    return float4(surface.albedo * incoming, 1.0f);
+}
+
+float4 CompositeLightingPS(LightingVSOut pin) : SV_Target
+{
+    int3 pixel = int3(uint2(pin.position.xy), 0);
+    float3 color = 0.0f;
+
+    if (g_GiDisplayMode == GiDisplayFull)
+    {
+        Texture2D<float4> directTex = ResourceDescriptorHeap[g_DirectLightingIndex];
+        color = directTex.Load(pixel).rgb;
+    }
+    if (g_GiDisplayMode != GiDisplaySpecular && (g_GiFlags & GiHasDiffuse) != 0u)
+    {
+        Texture2D<float4> diffuseTex = ResourceDescriptorHeap[g_DiffuseGiIndex];
+        color += diffuseTex.Load(pixel).rgb;
+    }
+    if (g_GiDisplayMode != GiDisplayDiffuse && (g_GiFlags & GiHasSpecular) != 0u)
+    {
+        Texture2D<float4> specularTex = ResourceDescriptorHeap[g_SpecularGiIndex];
+        color += specularTex.Load(pixel).rgb;
+    }
+
+    // 各输入已应用接收面的材质响应。合成只相加，输出到 8 位后缓冲时再截断和抖动。
+    color = saturate(color);
+    if (g_GiDisplayMode == GiDisplayFull && (g_GiFlags & GiEnableDither) != 0u)
+        color += Dither8(uint2(pixel.xy));
     return float4(color, 1.0f);
 }

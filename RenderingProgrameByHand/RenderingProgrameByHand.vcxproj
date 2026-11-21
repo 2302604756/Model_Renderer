@@ -135,9 +135,11 @@
     <ClCompile Include="ComputeSmokePass.cpp" />
     <ClCompile Include="CPUDescriptorAllocator.cpp" />
     <ClCompile Include="d3d12lite.cpp" />
+    <ClCompile Include="DDGI.cpp" />
     <ClCompile Include="dds_loader.cpp" />
     <ClCompile Include="DemoController.cpp" />
     <ClCompile Include="GBufferPass.cpp" />
+    <ClCompile Include="GiPipeline.cpp" />
     <ClCompile Include="Input.cpp" />
     <ClCompile Include="LightingPass.cpp" />
     <ClCompile Include="main.cpp" />
@@ -154,6 +156,7 @@
     <ClCompile Include="ProbeSpatialFilterPass.cpp" />
     <ClCompile Include="ProbeUpdatePass.cpp" />
     <ClCompile Include="RenderContext.cpp" />
+    <ClCompile Include="Renderer.cpp" />
     <ClCompile Include="RenderGraph.cpp" />
     <ClCompile Include="RenderTexture.cpp" />
     <ClCompile Include="RootSignature.cpp" />
@@ -174,6 +177,7 @@
     <ClInclude Include="d3d.h" />
     <ClInclude Include="d3d12lite.h" />
     <ClInclude Include="DataTotal.h" />
+    <ClInclude Include="DDGI.h" />
     <ClInclude Include="dds_loader.h" />
     <ClCompile Include="DepthBuffer.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">false</ExcludedFromBuild>
@@ -185,6 +189,9 @@
     <ClInclude Include="DepthBuffer.h" />
     <ClInclude Include="FrameConstants.h" />
     <ClInclude Include="GBufferPass.h" />
+    <ClInclude Include="GiPipeline.h" />
+    <ClInclude Include="GiTypes.h" />
+    <ClInclude Include="GiPassBindings.hlsli" />
     <ClInclude Include="GpuMemoryBlock.h" />
     <ClInclude Include="Input.h" />
     <ClInclude Include="InstanceData.h" />
@@ -209,6 +216,7 @@
     <ClInclude Include="ProbeVolume.h" />
     <ClInclude Include="RenderContext.h" />
     <ClInclude Include="pass.h" />
+    <ClInclude Include="Renderer.h" />
     <ClInclude Include="RenderGraph.h" />
     <ClInclude Include="RenderTexture.h" />
     <ClInclude Include="RootSignature.h" />
@@ -223,6 +231,12 @@
   <ItemGroup>
     <None Include="packages.config" />
     <None Include="Readme.md" />
+    <None Include="ShadersScreenSpaceGI.hlsl">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="ShadersCommon.hlsl">

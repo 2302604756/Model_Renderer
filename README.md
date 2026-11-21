@@ -436,3 +436,13 @@ float TraceSunShadow(float3 worldPos, float3 N, float3 L)
 光追不是魔法：硬件RT Core能为我们做的只是遍历BHV Tree找到Ray Tracing命中目标，返回InstanceID。Ray的Origin，Direction，用几次RayTracing怎么用都是我们自己规定的，ID来获取对应数据我们自己去写
 目前使用伪随机hash来写光线方向，故噪声较为严重
 后续可改成准蒙特卡洛采样：用低差异值序列+重要性采样做PBR
+
+★★★★★★★★
+条状伪影：我们原先使用了SmoothStep来做三线性插值，这样就导致了在两侧靠近Probe的位置weights变化比较小,在距离探针较远的中间位置变化较大。这样就导致了明明是连续的亮度变化却看起来有条状伪影（神奇）
+
+ddgi阶段性结束
+
+
+参考ue来进行代码工程规范化：
+将工程模块化：
+我们把diffuse GI和 specular GI做成两个独立的插槽，每个插槽每帧只选一个算法

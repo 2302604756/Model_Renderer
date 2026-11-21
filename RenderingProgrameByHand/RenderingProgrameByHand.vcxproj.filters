@@ -73,6 +73,9 @@
     <Filter Include="DemoController">
       <UniqueIdentifier>{2f25de77-6f07-48bd-8bb3-7b702c05e45f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Renderer">
+      <UniqueIdentifier>{158109ee-2151-412f-bf88-c612c948d70e}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="d3d12lite.cpp">
@@ -182,6 +185,15 @@
     </ClCompile>
     <ClCompile Include="ProbeSpatialFilterPass.cpp">
       <Filter>探针</Filter>
+    </ClCompile>
+    <ClCompile Include="Renderer.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="DDGI.cpp">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="GiPipeline.cpp">
+      <Filter>Renderer</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -329,12 +341,30 @@
     <ClInclude Include="ProbeSpatialFilterPass.h">
       <Filter>探针</Filter>
     </ClInclude>
+    <ClInclude Include="Renderer.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="DDGI.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="GiPipeline.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="GiTypes.h">
+      <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="GiPassBindings.hlsli">
+      <Filter>Renderer</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="Readme.md">
       <Filter>源文件</Filter>
     </None>
     <None Include="packages.config" />
+    <None Include="ShadersScreenSpaceGI.hlsl">
+      <Filter>Shader</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="ShadersCommon.hlsl">

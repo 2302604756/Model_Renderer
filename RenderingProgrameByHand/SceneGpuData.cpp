@@ -93,5 +93,5 @@ void SceneGpuData::Update(uint32_t frameIndex,const MeshLibrary& meshLibrary,con
 	const uint32_t slot = frameIndex % kFrameCount;
 	THROW_IF_FAILED(m_buffers[slot]->Map(0, nullptr, &mapped));
 	std::memcpy(mapped, gpuObjects.data(), gpuObjects.size() * sizeof(GPUObjectData));
-	m_buffers[frameIndex]->Unmap(0, nullptr);
+	m_buffers[slot]->Unmap(0, nullptr);
 }
