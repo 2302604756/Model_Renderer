@@ -18,6 +18,7 @@
 
 - [已实现的能力](#-已实现的能力)
 - [效果展示](#-效果展示)
+- [交互与调试](#-交互与调试)
 - [更新记录](#-更新记录)
 - [架构](#-架构)
 - [构建与运行](#-构建与运行)
@@ -30,20 +31,23 @@
 
 | 能力 | 载体 | 说明 |
 |:--|:--|:--|
+| 应用 / 渲染分层 | `App` / `Renderer` | `App` 只负责 Win32 输入、相机、场景和 `RenderOptions`；GPU 资源与 Pass 全部由 `Renderer` 持有 |
 | 多帧在途流水线 | `RenderContext` + `FrameResource` | 默认 **3 帧在途**，每帧一套 `CommandAllocator` / `CommandList` / fence 值 |
-| 全局设备与同步上下文 | `RenderContext` | 设备、交换链、命令队列、Fence 与帧索引的集中管理 |
-| 命令与工具封装 | `d3d12lite` | 轻量封装层，含 `MeshBuffer` |
-| CPU 侧描述符池 | `CPUDescriptorAllocator` | 非着色器可见的 **RTV / DSV 双堆**（默认各 500 槽），空闲链表分配；`Init()` 里为交换链 backbuffer 预留静态槽位 |
-| Bindless 描述符分发 | `BindlessDescriptorHeap` | 着色器可见堆，默认容量 **10000**；`GPUDescriptorHandle{cpu, gpu, index}` |
-| 瞬态显存复用 | `TransientHeap` | 一块 `ID3D12Heap`（默认 **256 MB**）+ bump 游标，`Reset()` 一键别名覆写 |
-| 常驻上传堆 | `UploadHeap` | 初始化时持久 `Map` 的大 buffer（默认 **64 MB**），按 512 / 256 字节对齐切片 |
-| 纹理与状态追踪 | `Texture2D` | `CreatePlaced` / `LoadFromFilePlaced`，内部记录 `m_currentState` 与 bindless 索引 |
-| 链式 PSO 构建 | `PipelineBuilder` | `SetRootSignature` / `SetInputLayout` / `SetShaders` / `SetRTVFormat` → `Build` |
-| DDS 纹理加载 | `dds_loader` | 自带 DDS 解析 |
-| 延迟渲染 | `RenderTexture` + 全屏 Lighting pass | G-buffer（albedo / world normal）+ 由深度重建世界坐标；debug 视图 1–6 |
-| 光线追踪 | `rt::AccelerationScene` | BLAS/TLAS 构建与 SRV 绑定，像素着色器 ray query：太阳阴影 + 纯光追 GI |
-| 逐实例 GPU 数据 | `GPU_UPLOAD` + bindless SRV | `GPUObjectData` 存每个实例的 world / normal / albedo / VB / IB 槽，供 GI 在命中点取几何属性 |
-| 应用层 | `App` | 持有上下文、两个描述符分配器、两个堆、PSO、网格与纹理，驱动单帧流程 |
+| 设备与同步上下文 | `RenderContext` | 设备、交换链、命令队列、Fence、适配器选择与帧索引 |
+| RenderGraph | `RenderGraph` | 资源版本、RAW / WAR / 版本顺序边、拓扑排序、Transition / UAV barrier 规划、编译期校验 |
+| Bindless 描述符 | `BindlessDescriptorHeap` | 着色器可见 `CBV_SRV_UAV` 堆，默认 **10000** 槽；`GPUDescriptorHandle{cpu, gpu, index}` |
+| CPU 描述符池 | `CPUDescriptorAllocator` | 非着色器可见 **RTV / DSV 双堆**（默认各 500 槽），预填槽位栈，分配后由调用方创建 view |
+| 初始化 placed 资源 | `TransientHeap` | 一块 `ID3D12Heap`（默认 **256 MB**）+ bump 游标；当前用于初始化纹理和网格，尚未做逐帧 transient aliasing |
+| 上传内存 | `UploadHeap` | 持久映射的大 buffer（默认 **64 MB**），支持 UPLOAD / GPU_UPLOAD；初始化上传与逐帧常量 |
+| 纹理与状态追踪 | `Texture2D` | `CreatePlaced` / `LoadFromFilePlaced`，内部记录状态与 bindless 索引 |
+| 链式 PSO 构建 | `PipelineBuilder` | 根签名、shader blob、RTV 格式、深度/光栅状态 → PSO |
+| 延迟渲染 | G-buffer + `GiPipeline` | albedo / world normal / volume mask + depth；由深度重建世界坐标 |
+| 光线追踪 | `rt::AccelerationScene` | BLAS/TLAS 构建与 SRV 绑定；太阳阴影、光追 GI 与 DDGI 探针求交 |
+| DDGI | `DDGI` + `ProbeGrid` | 10×5×10 探针网格、每探针 256 条 ray、原始/滤波辐照度图集、距离矩、体积掩码 |
+| GI 编排 | `GiPipeline` | Direct → Diffuse Provider → Specular Provider → Composite；支持 DDGI / SSGI / RayTraced / SSR / None |
+| 显示与调试 | `GiDisplayMode` + legacy Lighting | Composite / DiffuseOnly / SpecularOnly；旧 `LightingPass` 保留为调试路径 |
+| 逐实例 GPU 数据 | `GPU_UPLOAD` + bindless SRV | `GPUObjectData` 存每个实例的 world / normal / albedo / VB / IB 槽 |
+| 统计 | `App` 标题栏 | FPS、Frame、WaitGPU、Record / Execute / Present、TickCPU、Upload 堆类型 |
 
 ---
 
@@ -61,10 +65,31 @@ Cornell Box 场景：主射线命中的可见点按余弦加权半球采样 2 �
 
 ---
 
+## 🎮 交互与调试
+
+| 按键 | 行为 |
+|:--|:--|
+| `1` / `F1` | DDGI 漫反射 + Composite |
+| `2` / `F3` | 纯光追漫反射 + Composite |
+| `3` | DDGI + DiffuseOnly |
+| `4` | 纯光追 + DiffuseOnly |
+| `F2` | SSGI + Composite |
+| `F4` | 关闭漫反射 GI |
+| `F5` / `F6` | 镜面 GI Off / SSR |
+| `F7` / `F8` | SpecularOnly / Composite 显示 |
+| `R` | 重置 DDGI 历史 |
+| `N` | 法线调试 |
+| `5`–`0`、`P`、`T`、`V` | 旧 Lighting 调试视图（探针有效数、Chebyshev、图集、距离矩、探针位置等） |
+
+> `GiDisplayMode` 只决定 Composite 读取哪些 GI 通道，不改变实际执行的漫反射/镜面算法；算法由 `DiffuseGiMode` / `SpecularGiMode` 选择。
+
+---
+
 ## 🗓 更新记录
 
 | 日期 | 更新内容 |
 |:--|:--|
+| 2026-11-22 | **Renderer / GiPipeline / RenderGraph 改造**：App 不再持有 GPU 资源；新增 GI Provider 编排层；RenderGraph 支持资源版本、RAW/WAR 依赖、拓扑排序、自动 Transition/UAV barrier 与 TLAS 图资源跟踪 |
 | 2026-10-24 | **纯光追 GI（one-bounce path tracing）**：命中点取几何属性 + 二次阴影射线，Cornell Box 出现 color bleeding；README 增加效果展示与更新记录模块 |
 | 2026-10-23 | **DXR 光追**：BLAS/TLAS 构建 + `rt::AccelerationScene` 封装 + 像素着色器 ray query 太阳阴影；`GPUObjectData` 走 GPU_UPLOAD + bindless SRV，供 GI 使用；README 补充工程笔记 |
 | 2026-10-22 | **延迟渲染**：G-buffer（albedo / world normal）+ 全屏 Lighting pass、`RenderTexture` 多渲染目标、debug 视图；GPU 计时体系（Record / Execute / Present / WaitGPU / WaitHit） |
@@ -75,56 +100,71 @@ Cornell Box 场景：主射线命中的可见点按余弦加权半球采样 2 �
 
 ## 🏗 架构
 
+### 分层与持有关系
+
 ```mermaid
 graph TD
-    App["App<br/>应用层：持有全部子系统"]
-    RC["RenderContext<br/>设备 / 交换链 / 队列 / Fence<br/>3 帧在途"]
-    D3D["d3d12lite<br/>工具封装 + MeshBuffer"]
-    CPU["CPUDescriptorAllocator<br/>非着色器可见堆"]
-    GPU["BindlessDescriptorHeap<br/>着色器可见堆"]
-    TH["TransientHeap<br/>256MB Heap + Bump 游标<br/>Placed Resource"]
-    UH["UploadHeap<br/>64MB 持久映射 Buffer"]
-    TEX["Texture2D<br/>状态追踪 + Bindless 索引"]
-    PB["PipelineBuilder"]
-    DL["dds_loader"]
+    Main["main.cpp<br/>WinMain / 消息循环"]
+    App["App<br/>Input / Camera / Scene / DemoController"]
+    Renderer["Renderer<br/>渲染组合根"]
+    RC["RenderContext<br/>Device / SwapChain / Queue / Fence"]
+    CPU["CPUDescriptorAllocator<br/>RTV / DSV"]
+    GPU["GPUDescriptorAllocator<br/>Bindless SRV / UAV"]
+    TH["TransientHeap<br/>初始化 placed 资源"]
+    UH["UploadHeap<br/>初始化上传 / 逐帧常量"]
+    SceneGPU["SceneGpuData + AccelerationScene<br/>逐帧物体数据 / BLAS / TLAS"]
+    Graph["RenderGraph<br/>资源版本 / 依赖 / barrier 规划"]
+    GBuffer["GBufferPass"]
+    DDGI["DDGI<br/>ProbeGrid / ProbeRayBuffer / 计算 Pass"]
+    GI["GiPipeline<br/>Direct / Diffuse / Specular / Composite"]
+    Legacy["LightingPass<br/>旧调试路径"]
 
-    App --> RC
-    App --> CPU
-    App --> GPU
-    App --> TH
-    App --> UH
-    App --> PB
-    App --> TEX
-    TEX --> TH
-    TEX --> UH
-    TEX --> GPU
-    TEX --> DL
-    RC --> D3D
+    Main --> App
+    App --> Renderer
+    Renderer --> RC
+    Renderer --> CPU
+    Renderer --> GPU
+    Renderer --> TH
+    Renderer --> UH
+    Renderer --> SceneGPU
+    Renderer --> Graph
+    Graph --> GBuffer
+    Graph --> DDGI
+    Graph --> GI
+    Graph --> Legacy
 ```
 
 ### 单帧流程
 
 ```mermaid
 sequenceDiagram
-    participant M as main
     participant A as App
-    participant RC as RenderContext
-    M->>A: RenderTick()
-    A->>RC: BeginFrame()
-    Note over RC: 等待该帧 fence<br/>再 Reset 对应的 Allocator 与 CommandList
-    A->>A: 录制：RootSignature / PSO / Draw
-    A->>RC: EndFrame()
-    Note over RC: Close → ExecuteCommandLists → Signal → Present
+    participant R as Renderer
+    participant G as RenderGraph
+    participant C as RenderContext
+
+    A->>R: RenderFrame(camera, options)
+    R->>C: BeginFrame() / 等待帧槽
+    R->>R: SceneGpuData.Update + 常量上传
+    R->>G: BeginFrame()
+    R->>G: AddPass(TLASUpdate / GBuffer)
+    R->>G: GiPipeline.AddPasses 或 legacy LightingPass
+    R->>G: Execute()
+    G->>G: Compile → 拓扑排序 + barrier 规划
+    G->>C: 录制 Pass 命令
+    R->>C: EndFrame() → Present
 ```
 
-### 四类分配器各管一段
+### 资源与描述符
 
-| 分配器 | 管的资源 | 分配策略 | 回收方式 |
+| 对象 | 管的资源 | 分配策略 | 当前回收策略 |
 |:--|:--|:--|:--|
-| `CPUDescriptorAllocator` | 非着色器可见描述符 | 空闲链表 | 显式释放 |
-| `GPUDescriptorAllocator` | 着色器可见描述符（bindless） | 空闲链表 | 显式释放 |
-| `TransientHeap` | 默认堆上的 placed resource | Bump 游标 + `ID3D12Heap` | 帧末 `Reset()` 覆写物理地址 |
-| `UploadHeap` | 上传内存（UPLOAD 堆） | Bump 游标 + 512 字节对齐 | GPU 完成后 `Reset()` |
+| `CPUDescriptorAllocator` | RTV / DSV | 预填槽位栈 | 只分配，不回收 |
+| `GPUDescriptorAllocator` | bindless SRV / UAV | 预填槽位栈 | 只分配，不回收；容量固定 |
+| `TransientHeap` | placed texture / mesh | `ID3D12Heap` + bump 游标 | 初始化阶段使用，尚未做逐帧 aliasing |
+| `UploadHeap` | 初始化上传 / 逐帧常量 | 持久映射 + bump 游标 | 初始化结束后 `Reset()`，逐帧槽位由 fence 复用 |
+
+`RenderGraph` 只保存裸资源指针和状态，不拥有资源；资源由 `Renderer`、`DDGI`、`GiPipeline` 等所有者创建和释放。
 
 ---
 
@@ -156,29 +196,58 @@ cd RenderingProgrameByHand
 
 - [x] 第一阶段：CPU / GPU 流水线骨架，多帧在途
 - [x] 第二阶段：Bindless 描述符分发
-- [x] Placed Resource 显存复用 + 瞬态堆
-- [x] 持久映射上传堆 + Bump 分配
-- [ ] **把 `Pass` 抽象补上** —— `pass.h` 目前还是空壳，`PSO` 仍由 `App` 直接持有
-- [x] RenderGraph 根据资源版本排序 Pass，规划 Transition/UAV barrier 并检查帧内生命周期
-- [ ] 用依赖注入替换全局单例，解除 `RenderContext` 与子系统的耦合
-- [ ] 补齐 `UploadHeap` / `TransientHeap` 的**跨帧延迟回收**（当前 `Reset()` 依赖帧同步时机）
+- [x] Placed Resource 初始化路径 + 上传堆
+- [x] `Pass` 抽象 + `Renderer` 统一持有 PSO / GPU 资源
+- [x] RenderGraph 资源版本、RAW/WAR 依赖、拓扑排序、Transition/UAV barrier 规划
+- [x] TLAS 作为 RenderGraph 资源跟踪
+- [x] App / Renderer / DDGI / GiPipeline 模块化
+- [x] DDGI / SSGI / RayTraced / SSR 的 GI Provider 编排
+- [ ] 窗口 resize / swapchain / G-buffer / GI target 重建
+- [ ] 真正的逐帧 transient 资源池与显存 aliasing
+- [ ] 描述符回收与跨帧延迟释放
+- [ ] 把 `ProbeRelocationPass` 接回 DDGI 更新序列
+- [ ] 统一 legacy Lighting 与 GiPipeline，减少双路径维护成本
+- [ ] TAA / tone mapping / 动态分辨率
+- [ ] async compute / 多队列同步
+- [ ] 依赖注入替换全局 `RenderContext` 单例
 
-### RenderGraph 资源声明
+### RenderGraph 当前行为
 
-`AddPass` 收集读写声明。`Compile` 按 RAW、WAR 和 WAW 建边，用 Kahn 算法生成执行顺序。无依赖的 Pass 按登记顺序打破平局。`Execute` 在各 Pass 前批量提交已规划的 barrier。
+`AddPass` 只收集声明；`Compile` 负责校验、建边、排序和 barrier 规划；`Execute` 才真正插 barrier 并执行。
 
-- `Write(id, state)` 默认产出版本 1。`Read(id, state)` 默认读取本帧最终版本。读取中间结果时，在第三个参数指定版本。
-- `ReadWrite(id, state, 2)` 在同一个资源上读版本 1、写版本 2。DDGI 的射线求交、着色和图集补边使用这种方式表达就地更新。
-- `FrameLocal` 的首个读者必须有本帧生产者。`Preserved` 允许通过版本 0 读取已有内容，例如 DDGI 的距离矩历史。
-- `GetCompiledPasses()` 可查看排序和 barrier，`GetLifetime(id)` 给出编译后执行序列中的首次和末次使用位置。`Transition(id, state)` 表示最后一次状态转换，例如 `PRESENT`。
+- `Write(id, state)` 默认产出版本 1；`Read(id, state)` 默认读取本帧最终版本。
+- `ReadWrite(id, state, 2)` 表示读版本 1、写版本 2；DDGI 的 ray buffer、图集补边和 fixup 使用这种方式。
+- `FrameLocal` 资源的首个读者必须有本帧生产者；`Preserved` 允许读版本 0，例如 DDGI 历史图集。
+- `Compile` 建立：
 
-当前图工作在同一条 DIRECT 队列上，按整个资源追踪状态。资源仍由 Renderer 或对应模块创建和释放。
+```text
+RAW：writer(v) → reader
+WAR：reader → writer(v+1)
+版本顺序：writer(v) → writer(v+1)
+最终转换：所有访问 → Transition
+```
+
+- `Compile` 使用确定性拓扑排序；缺少 writer、多个 writer、非法版本、依赖环等直接抛 `std::logic_error`。
+- `BuildBarrierPlan` 预生成每个 Pass 的 Transition / UAV barrier；`Execute` 批量提交。
+- `GetCompiledPasses()` 可查看执行顺序和 barrier，`GetLifetime(id)` 给出编译后执行序号中的 firstUse / lastUse。
+
+当前图仍工作在同一条 DIRECT 队列上，按整个资源追踪状态；`ResourceLifetime` 还没有用于 transient 分配或 aliasing。
+
+### 已知限制
+
+- 渲染分辨率固定为 1920×1080，窗口 resize 尚未接入。
+- 描述符分配器只有 Allocate，没有 Free / 跨帧回收。
+- G-buffer、GI HDR 目标、DDGI 图集都是持久资源，没有 transient 池。
+- RenderGraph 没有 Pass culling、subresource 状态或 async compute 同步。
+- `ProbeRelocationPass` 已初始化，但当前未加入 `DDGI::AddUpdatePasses`。
+- legacy `LightingPass` 与 `GiPipeline` 仍并存，前者主要用于调试视图。
+- 没有 TAA、denoiser、tone mapping 或动态分辨率。
 
 ---
 
 ## 📝 工程笔记
 
-> 以下是开发过程中的原始记录，按主题重新分节。都是踩过坑之后的结论，不是抄来的定义。
+> 以下按开发阶段记录，保留当时的思路和踩坑结论；部分内容已经被当前架构替换，当前行为以「已实现的能力 / 架构 / 路线图」为准。
 
 ### 1. 多帧在途流水线怎么分工
 
