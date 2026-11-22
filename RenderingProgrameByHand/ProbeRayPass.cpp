@@ -6,18 +6,21 @@ void ProbeRayPass::Init(ID3D12RootSignature* rootSignature,
     ID3D12PipelineState* pso,
     ProbeGrid* probeGrid,
     ProbeRayBuffer* rayBuffer,
-    RenderGraph::ResourceId rayBufferId)
+    RenderGraph::ResourceId rayBufferId,
+    RenderGraph::ResourceId probeDataId)
 {
     m_rootSignature = rootSignature;
     m_pso = pso;
     m_probeGrid = probeGrid;
     m_rayBuffer = rayBuffer;
     m_rayBufferId = rayBufferId;
+    m_probeDataId = probeDataId;
 }
 
 void ProbeRayPass::Declare(RenderGraph::PassBuilder& builder)
 {
-    builder.ReadWrite(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    builder.Read(m_probeDataId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 0);
+    builder.Write(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 
 void ProbeRayPass::Execute(RenderGraph::FrameContext& ctx)
@@ -47,10 +50,4 @@ void ProbeRayPass::Execute(RenderGraph::FrameContext& ctx)
 
     const uint32_t totalRays = p.probeCount * p.rayCount;
     cmdList->Dispatch((totalRays + 63) / 64, 1, 1);
-
-    // 保证 shade pass 能读到 ray 数据
-    D3D12_RESOURCE_BARRIER barrier{};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barrier.UAV.pResource = m_rayBuffer->GetResource();
-    cmdList->ResourceBarrier(1, &barrier);
 }

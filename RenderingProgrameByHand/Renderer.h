@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <vector>
 #include "AccelerationStructure.h"
@@ -83,6 +84,7 @@ private:
     SceneGpuData m_sceneGpuData;
     rt::AccelerationScene m_rtScene;
     TLASUpdatePass m_tlasUpdatePass;
+    std::array<RenderGraph::ResourceId, rt::AccelerationScene::kFrameCount> m_tlasIds{};
 
     std::vector<GPULight> m_gpuLights;
     LightingConstants m_lightingConstants{};

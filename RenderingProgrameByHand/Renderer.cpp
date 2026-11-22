@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 Renderer::Renderer(Scene& scene) : m_scene(scene)
 {
@@ -96,6 +97,12 @@ void Renderer::Init(HWND hwnd)
 	m_rtScene.ReleaseBuildScratch();
 	// 为每个帧槽登记 TLAS 描述符，供探针求交和逐像素光追使用。
 	m_rtScene.CreateTLASDescriptor(device, m_gpuAllocator);
+	for (uint32_t slot = 0; slot < rt::AccelerationScene::kFrameCount; ++slot)
+	{
+		const std::string name = "TLAS[" + std::to_string(slot) + "]";
+		m_tlasIds[slot] = m_graph.RegisterResource(name.c_str(), m_rtScene.GetTLASResource(slot),
+			D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+	}
 
 	// 重置初始化上传堆的分配游标，允许复用这段上传内存。
 	m_uploadHeap.Reset();
@@ -148,27 +155,6 @@ void Renderer::Init(HWND hwnd)
 		.Build(device);
 
 
-	// 初始化保留的 ComputeSmoke PSO 和纹理。目前没有把这个测试 pass 加入帧图。
-	m_computeRootSignature = RootSignatureBuilder()
-		.Add32BitConstants(8, 0)          // b0: ComputeParams
-		.Build(device, /*allowInputLayout*/ false);
-
-	auto computeCsBlob = d3d12lite::CompileShaderSM66(
-		L"ShadersCompute.hlsl", L"ComputeSmokeCS", L"cs_6_6");
-	assert(!computeCsBlob.empty());
-
-	PipelineBuilder computeBuilder;
-	m_computePSO = computeBuilder.BuildCompute(
-		device, m_computeRootSignature.Get(), computeCsBlob);
-
-	// 纹理具备 UAV 和 SRV，Lighting 继续接收原有的 compute 纹理索引。
-	m_computeTexture.InitUAV(device, m_gpuAllocator, 1920, 1080, DXGI_FORMAT_R8G8B8A8_UNORM);
-
-	m_computeTextureId = m_graph.RegisterResource(
-		"ComputeTexture", m_computeTexture.GetResource(),
-		D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-
-
 
 	// 将场景探针体积交给 DDGI。Lighting 通过只读参数连接图集和描述符。
 	m_ddgi.Init(device, m_gpuAllocator, m_graph, m_scene.GetProbeVolumes());
@@ -194,14 +180,14 @@ void Renderer::Init(HWND hwnd)
 	}
 
 	// Pass 借用 GPU 对象。ResourceId 用于声明读写，bindless 索引用于着色器访问。
-	m_gbufferPass.Init(m_gbufferPSO.Get(),
+	m_gbufferPass.Init(m_rootSignature.Get(), m_gbufferPSO.Get(),
 		&m_gbufferAlbedo, &m_gbufferNormal, &m_depthBuffer,
 		&m_scene, &m_meshLibrary,
 		&m_gbufferVolumeMask,
 		m_gbufferAlbedoId, m_gbufferNormalId, m_depthId,
 		m_gbufferVolumeMaskId);
 
-	m_lightingPass.Init(m_lightingPSO.Get(),
+	m_lightingPass.Init(m_rootSignature.Get(), m_lightingPSO.Get(),
 		&m_gbufferAlbedo, &m_gbufferNormal, &m_depthBuffer,
 		m_gbufferAlbedoId, m_gbufferNormalId, m_depthId,
 		m_depthBindlessIndex,
@@ -217,7 +203,8 @@ void Renderer::Init(HWND hwnd)
 		ddgi.distanceSrv,                           // 着色器采样距离矩的 SRV 索引。
 		m_gbufferVolumeMaskId,
 		m_gbufferVolumeMask.GetBindlessIndex(),
-		ddgi.probeMaskSrv);
+		ddgi.probeMaskSrv,
+		ddgi.probeData);
 
 	const GBufferViews views{
 		{ m_gbufferAlbedoId, m_gbufferAlbedo.GetBindlessIndex() },
@@ -286,17 +273,15 @@ FrameTimings Renderer::RenderFrame(const Camera& camera, float dt,
 		std::memcpy(lightBlock.cpuAddress, m_gpuLights.data(), lightBytes);
 
 
-	// 提前绑定共享 bindless 堆，设置两个图形 pass 使用的视口和图形根签名。
+	// 绑定全图共享的 bindless 堆和视口。每个图形 pass 自行绑定根签名及参数。
 	ID3D12DescriptorHeap* heaps[] = { m_gpuAllocator.GetHeap() };
 	cmdList->SetDescriptorHeaps(1, heaps);
-	cmdList->SetGraphicsRootSignature(m_rootSignature.Get());
 
 	D3D12_VIEWPORT viewport = { 0.0f, 0.0f, 1920.0f, 1080.0f, 0.0f, 1.0f };
 	D3D12_RECT scissorRect = { 0, 0, 1920, 1080 };
 	cmdList->RSSetViewports(1, &viewport);
 	cmdList->RSSetScissorRects(1, &scissorRect);
 	cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	cmdList->SetGraphicsRootConstantBufferView(1, cbvGpuAddr); // 根参数 [1] 绑定 b1。
 
 	// FrameContext 把本帧的命令列表、GPU 地址、输出视图和调试模式交给 pass。
 	RenderGraph::FrameContext ctx{};
@@ -313,19 +298,18 @@ FrameTimings Renderer::RenderFrame(const Camera& camera, float dt,
 		m_sceneGpuData.GetBindlessIndex(ctx.frameIndex);
 	ctx.bindings.tlasDescriptor =
 		m_rtScene.GetTLASDescriptor(ctx.frameIndex);
+	ctx.bindings.tlasResource = m_tlasIds[ctx.frameIndex % rt::AccelerationScene::kFrameCount];
 
 	m_graph.BeginFrame();
 
 	// 当前直接光的阴影也使用 TLAS，切去屏幕空间 GI 时仍需更新它。
-	m_graph.AddPass(m_tlasUpdatePass);
+	m_tlasUpdatePass.Schedule(m_graph, ctx.bindings.tlasResource);
 	m_graph.AddPass(m_gbufferPass);
 	const RenderGraph::ResourceId backbufferId = m_backbufferIds[ctx.frameIndex];
 	if (options.legacyDebugMode != 0) {
-		// 法线视图仅使用 G-buffer。其余旧诊断显示的是当前探针及图集。
-		if (options.legacyDebugMode != 2)
+		if (LightingPass::UsesProbeAtlases(ctx.debugMode))
 			m_giPipeline.AddProbeDebugUpdates(m_graph, ctx, options.resetProbeHistory);
-		m_lightingPass.SetBackbuffer(backbufferId);
-		m_graph.AddPass(m_lightingPass);
+		m_lightingPass.Schedule(m_graph, ctx, backbufferId);
 	}
 	else {
 		m_giPipeline.AddPasses(m_graph, ctx, options, backbufferId);

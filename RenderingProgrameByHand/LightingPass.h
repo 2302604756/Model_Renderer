@@ -9,7 +9,7 @@ struct ID3D12PipelineState;
 
 class LightingPass : public RenderPass {
 public:
-    void Init(ID3D12PipelineState* pso,
+    void Init(ID3D12RootSignature* rootSignature, ID3D12PipelineState* pso,
         RenderTexture* albedo, RenderTexture* normal, DepthBuffer* depth,
         RenderGraph::ResourceId albedoId,
         RenderGraph::ResourceId normalId,
@@ -25,16 +25,19 @@ public:
         uint32_t distanceAtlasIndex,
         RenderGraph::ResourceId volumeMaskId,
         uint32_t volumeMaskIndex,
-        uint32_t probeMaskIndex);                 // 距离矩 atlas SRV
+        uint32_t probeMaskIndex,
+        RenderGraph::ResourceId probeDataId);
 
-    // 每帧由 App 设置（backbuffer 在 3 张图之间轮换）
-    void SetBackbuffer(RenderGraph::ResourceId backbufferId) { m_backbufferId = backbufferId; }
+    static bool UsesProbeAtlases(uint32_t debugMode) noexcept;
+    void Schedule(RenderGraph& graph, const RenderGraph::FrameContext& frame,
+        RenderGraph::ResourceId backbufferId);
 
     const char* GetName() const override { return "Lighting"; }
     void Declare(RenderGraph::PassBuilder& builder) override;
     void Execute(RenderGraph::FrameContext& ctx) override;
 
 private:
+    ID3D12RootSignature* m_rootSignature = nullptr;
     ID3D12PipelineState* m_pso = nullptr;
     RenderTexture* m_albedo = nullptr;
     RenderTexture* m_normal = nullptr;
@@ -44,6 +47,8 @@ private:
     RenderGraph::ResourceId m_normalId = RenderGraph::kInvalidId;
     RenderGraph::ResourceId m_depthId = RenderGraph::kInvalidId;
     RenderGraph::ResourceId m_backbufferId = RenderGraph::kInvalidId;
+    RenderGraph::ResourceId m_tlasId = RenderGraph::kInvalidId;
+    uint32_t m_debugMode = 0;
 
     uint32_t m_depthBindlessIndex = 0;
     uint32_t m_computeTextureIndex = 0;
@@ -56,6 +61,7 @@ private:
     uint32_t                m_gridCountX = 0, m_gridCountY = 0, m_gridCountZ = 0;
     uint32_t                m_probeSrvIndex = 0;
     RenderGraph::ResourceId m_probeDistanceAtlasId = RenderGraph::kInvalidId;
+    RenderGraph::ResourceId m_probeDataId = RenderGraph::kInvalidId;
     uint32_t                m_distanceAtlasIndex = 0;
     RenderGraph::ResourceId m_volumeMaskId = RenderGraph::kInvalidId;
     uint32_t                m_volumeMaskIndex = 0;

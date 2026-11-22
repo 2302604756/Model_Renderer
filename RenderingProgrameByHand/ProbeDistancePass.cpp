@@ -5,8 +5,8 @@ void ProbeDistancePass::Init(ID3D12RootSignature* rootSignature,
     ID3D12PipelineState* pso,
     ProbeGrid* probeGrid,
     ProbeRayBuffer* rayBuffer,
-    RenderGraph::ResourceId rayBufferId,
-    RenderGraph::ResourceId distanceAtlasId)
+    RenderGraph::ResourceId distanceAtlasId,
+    RenderGraph::ResourceId rayBufferId)
 {
     m_rootSignature = rootSignature;
     m_pso = pso;
@@ -19,7 +19,7 @@ void ProbeDistancePass::Init(ID3D12RootSignature* rootSignature,
 void ProbeDistancePass::Declare(RenderGraph::PassBuilder& builder)
 {
     builder.ReadWrite(m_distanceAtlasId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    builder.ReadWrite(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS); 
+    builder.Read(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 
 void ProbeDistancePass::Execute(RenderGraph::FrameContext& ctx)
@@ -50,10 +50,4 @@ void ProbeDistancePass::Execute(RenderGraph::FrameContext& ctx)
 
     // 每个 group = 一个探针（16×16 线程）
     cmdList->Dispatch(grid.GetProbeCount(), 1, 1);
-
-    // UAV barrier：后续 pass 才能读到
-    D3D12_RESOURCE_BARRIER barrier{};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barrier.UAV.pResource = m_probeGrid->GetDistanceResource();
-    cmdList->ResourceBarrier(1, &barrier);
 }

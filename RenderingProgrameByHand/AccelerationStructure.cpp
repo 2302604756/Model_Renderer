@@ -115,8 +115,10 @@ namespace rt {
                 D3D12_HEAP_TYPE_DEFAULT,
                 D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
                 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS); 
+            // 构建会写入 scratch。DEFAULT 缓冲在首次使用时从 COMMON 提升到 UAV。
             data.scratch = CreateBuffer(device, prebuild.ScratchDataSizeInBytes,
-                D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON,
+                D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 
             D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
             build.Inputs = inputs;
@@ -169,7 +171,8 @@ namespace rt {
                 D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
                 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
             data.scratch = CreateBuffer(device, prebuild.ScratchDataSizeInBytes,
-                D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON,
+                D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 
             D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
             build.Inputs = inputs;
@@ -287,10 +290,8 @@ namespace rt {
         build.ScratchAccelerationStructureData = frame.tlas.scratch->GetGPUVirtualAddress();
         build.DestAccelerationStructureData = frame.tlas.resource->GetGPUVirtualAddress();
 
+        // 当前帧的 Build 与后续 RayQuery 之间由 RenderGraph 插入同步屏障。
         cmdList4->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
-
-        // 3. 后续光追 pass 才能读到新 TLAS
-        InsertUavBarrier(cmdList4.Get(), frame.tlas.resource.Get());
     }
 
 

@@ -10,7 +10,6 @@ public:
         ID3D12RootSignature* rootSignature,
         ID3D12PipelineState* pso,
         ProbeGrid* probeGrid,
-        ID3D12Resource* filteredResource,
         RenderGraph::ResourceId rawAtlasId,
         RenderGraph::ResourceId filteredAtlasId,
         RenderGraph::ResourceId distanceAtlasId);
@@ -26,7 +25,6 @@ private:
     ID3D12RootSignature* m_rootSignature = nullptr;
     ID3D12PipelineState* m_pso = nullptr;
     ProbeGrid* m_probeGrid = nullptr;
-    ID3D12Resource* m_filteredResource = nullptr;
 
     RenderGraph::ResourceId m_rawAtlasId = RenderGraph::kInvalidId;
     RenderGraph::ResourceId m_filteredAtlasId = RenderGraph::kInvalidId;

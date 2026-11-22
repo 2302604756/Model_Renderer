@@ -17,8 +17,8 @@ void ProbeFixupPass::Init(ID3D12RootSignature* rootSignature,
 
 void ProbeFixupPass::Declare(RenderGraph::PassBuilder& builder)
 {
-    builder.ReadWrite(m_irradianceId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    builder.ReadWrite(m_distanceId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    builder.ReadWrite(m_irradianceId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 2);
+    builder.ReadWrite(m_distanceId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 3);
 }
 
 void ProbeFixupPass::Execute(RenderGraph::FrameContext& ctx)
@@ -47,11 +47,4 @@ void ProbeFixupPass::Execute(RenderGraph::FrameContext& ctx)
     cmdList->SetComputeRootShaderResourceView(4, ctx.lightBufferAddress);
 
     cmdList->Dispatch(grid.GetProbeCount(), 1, 1);
-
-    D3D12_RESOURCE_BARRIER barriers[2]{};
-    barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barriers[0].UAV.pResource = m_probeGrid->GetResource();
-    barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barriers[1].UAV.pResource = m_probeGrid->GetDistanceResource();
-    cmdList->ResourceBarrier(2, barriers);
 }

@@ -13,8 +13,8 @@ public:
         ID3D12PipelineState* pso,
         ProbeGrid* probeGrid,
         ProbeRayBuffer* rayBuffer,
-        RenderGraph::ResourceId rayBufferId,
-        RenderGraph::ResourceId distanceAtlasId);
+        RenderGraph::ResourceId distanceAtlasId,
+        RenderGraph::ResourceId rayBufferId);
 
     const char* GetName() const override { return "ProbeDistance"; }
     void Declare(RenderGraph::PassBuilder& builder) override;

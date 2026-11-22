@@ -6,19 +6,22 @@ void ProbeRelocationPass::Init(ID3D12RootSignature* rootSignature,
     ID3D12PipelineState* pso,
     ProbeGrid* probeGrid,
     ProbeRayBuffer* rayBuffer,
-    RenderGraph::ResourceId rayBufferId)
+    RenderGraph::ResourceId rayBufferId,
+    RenderGraph::ResourceId probeDataId)
 {
     m_rootSignature = rootSignature;
     m_pso = pso;
     m_probeGrid = probeGrid;
     m_rayBuffer = rayBuffer;
     m_rayBufferId = rayBufferId;
+    m_probeDataId = probeDataId;
 }
 
 void ProbeRelocationPass::Declare(RenderGraph::PassBuilder& builder)
 {
     // 只读 ray buffer，但通过 UAV 描述符访问，状态保持 UNORDERED_ACCESS
-    builder.ReadWrite(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    builder.Read(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    builder.ReadWrite(m_probeDataId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 
 void ProbeRelocationPass::Execute(RenderGraph::FrameContext& ctx)
@@ -40,12 +43,6 @@ void ProbeRelocationPass::Execute(RenderGraph::FrameContext& ctx)
     p.rayCount = ProbeRayBuffer::kRayCount;
     p.rayBufferUav = m_rayBuffer->GetUAVIndex();
 
-    // 本帧 Lighting 已经读过旧 offset，写之前先等这些读完成
-    D3D12_RESOURCE_BARRIER preBarrier{};
-    preBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    preBarrier.UAV.pResource = m_probeGrid->GetProbeDataResource();
-    cmdList->ResourceBarrier(1, &preBarrier);
-
     cmdList->SetComputeRootSignature(m_rootSignature);
     cmdList->SetPipelineState(m_pso);
     cmdList->SetComputeRoot32BitConstants(0, 16, &p, 0);                        // b4
@@ -55,13 +52,4 @@ void ProbeRelocationPass::Execute(RenderGraph::FrameContext& ctx)
 
     // 一个线程 = 一个探针（605 个探针 → 10 个 group）
     cmdList->Dispatch((p.probeCount + 63) / 64, 1, 1);
-
-    // 写完 offset 后，下一帧 ProbeRay/Distance/Lighting 才能安全读取；
-    // 同时本帧 relocation 读过的 ray buffer，下一帧 ProbeRay 要覆盖写，需要 UAV barrier。
-    D3D12_RESOURCE_BARRIER barriers[2]{};
-    barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barriers[0].UAV.pResource = m_probeGrid->GetProbeDataResource();
-    barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barriers[1].UAV.pResource = m_rayBuffer->GetResource();
-    cmdList->ResourceBarrier(2, barriers);
 }

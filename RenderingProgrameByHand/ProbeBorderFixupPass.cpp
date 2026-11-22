@@ -3,7 +3,7 @@
 void ProbeBorderFixupPass::Init(ID3D12RootSignature* rootSignature,
     ID3D12PipelineState* pso,
     RenderGraph::ResourceId atlasId,
-    ID3D12Resource* atlasResource,
+    RenderGraph::Version outputVersion,
     uint32_t countX, uint32_t countY, uint32_t countZ,
     uint32_t uavIndex,
     uint32_t stride,
@@ -13,7 +13,7 @@ void ProbeBorderFixupPass::Init(ID3D12RootSignature* rootSignature,
     m_rootSignature = rootSignature;
     m_pso = pso;
     m_atlasId = atlasId;
-    m_atlasResource = atlasResource;
+    m_outputVersion = outputVersion;
     m_countX = countX;
     m_countY = countY;
     m_countZ = countZ;
@@ -25,7 +25,7 @@ void ProbeBorderFixupPass::Init(ID3D12RootSignature* rootSignature,
 
 void ProbeBorderFixupPass::Declare(RenderGraph::PassBuilder& builder)
 {
-    builder.ReadWrite(m_atlasId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    builder.ReadWrite(m_atlasId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, m_outputVersion);
 }
 
 void ProbeBorderFixupPass::Execute(RenderGraph::FrameContext& ctx)
@@ -46,10 +46,4 @@ void ProbeBorderFixupPass::Execute(RenderGraph::FrameContext& ctx)
 
     // 覆盖整张 atlas
     cmdList->Dispatch((m_atlasWidth + 7) / 8, (m_atlasHeight + 7) / 8, 1);
-
-    // 确保后续 pass 能读到 gutter
-    D3D12_RESOURCE_BARRIER barrier{};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barrier.UAV.pResource = m_atlasResource;
-    cmdList->ResourceBarrier(1, &barrier);
 }

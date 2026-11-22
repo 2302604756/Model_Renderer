@@ -10,7 +10,7 @@ struct ID3D12PipelineState;
 
 class GBufferPass : public RenderPass {
 public:
-    void Init(ID3D12PipelineState* pso,
+    void Init(ID3D12RootSignature* rootSignature, ID3D12PipelineState* pso,
         RenderTexture* albedo, RenderTexture* normal, DepthBuffer* depth,
         const Scene* scene, const MeshLibrary* meshLibrary, RenderTexture* volumeMask,
         RenderGraph::ResourceId albedoId,
@@ -23,6 +23,7 @@ public:
     void Execute(RenderGraph::FrameContext& ctx) override;
 
 private:
+    ID3D12RootSignature* m_rootSignature = nullptr;
     ID3D12PipelineState* m_pso = nullptr;
     RenderTexture* m_albedo = nullptr;
     RenderTexture* m_normal = nullptr;

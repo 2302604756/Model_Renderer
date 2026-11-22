@@ -20,7 +20,7 @@ void ProbeUpdatePass::Init(ID3D12RootSignature* rootSignature,
 void ProbeUpdatePass::Declare(RenderGraph::PassBuilder& builder)
 {
     builder.ReadWrite(m_probeGridId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    builder.ReadWrite(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS); 
+    builder.Read(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 
 void ProbeUpdatePass::Execute(RenderGraph::FrameContext& ctx)
@@ -59,9 +59,4 @@ void ProbeUpdatePass::Execute(RenderGraph::FrameContext& ctx)
     // 每个 group = 一个探针（8×8 线程 = 64 个 octahedral texel）
     // Dispatch分发线程的单位是我们在Shader中填写的[8,8,1],指在x方向上分发count个8*8*1
     cmdList->Dispatch(grid.GetProbeCount(), 1, 1);
-
-    D3D12_RESOURCE_BARRIER barrier{};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barrier.UAV.pResource = m_probeGrid->GetResource();
-    cmdList->ResourceBarrier(1, &barrier);
 }

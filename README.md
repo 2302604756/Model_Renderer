@@ -159,9 +159,20 @@ cd RenderingProgrameByHand
 - [x] Placed Resource 显存复用 + 瞬态堆
 - [x] 持久映射上传堆 + Bump 分配
 - [ ] **把 `Pass` 抽象补上** —— `pass.h` 目前还是空壳，`PSO` 仍由 `App` 直接持有
-- [ ] 资源状态由渲染图统一推导（目前 `Texture2D` 自己记录 `m_currentState`）
+- [x] RenderGraph 根据资源版本排序 Pass，规划 Transition/UAV barrier 并检查帧内生命周期
 - [ ] 用依赖注入替换全局单例，解除 `RenderContext` 与子系统的耦合
 - [ ] 补齐 `UploadHeap` / `TransientHeap` 的**跨帧延迟回收**（当前 `Reset()` 依赖帧同步时机）
+
+### RenderGraph 资源声明
+
+`AddPass` 收集读写声明。`Compile` 按 RAW、WAR 和 WAW 建边，用 Kahn 算法生成执行顺序。无依赖的 Pass 按登记顺序打破平局。`Execute` 在各 Pass 前批量提交已规划的 barrier。
+
+- `Write(id, state)` 默认产出版本 1。`Read(id, state)` 默认读取本帧最终版本。读取中间结果时，在第三个参数指定版本。
+- `ReadWrite(id, state, 2)` 在同一个资源上读版本 1、写版本 2。DDGI 的射线求交、着色和图集补边使用这种方式表达就地更新。
+- `FrameLocal` 的首个读者必须有本帧生产者。`Preserved` 允许通过版本 0 读取已有内容，例如 DDGI 的距离矩历史。
+- `GetCompiledPasses()` 可查看排序和 barrier，`GetLifetime(id)` 给出编译后执行序列中的首次和末次使用位置。`Transition(id, state)` 表示最后一次状态转换，例如 `PRESENT`。
+
+当前图工作在同一条 DIRECT 队列上，按整个资源追踪状态。资源仍由 Renderer 或对应模块创建和释放。
 
 ---
 
@@ -446,3 +457,73 @@ ddgi阶段性结束
 参考ue来进行代码工程规范化：
 将工程模块化：
 我们把diffuse GI和 specular GI做成两个独立的插槽，每个插槽每帧只选一个算法
+
+持有结构：
+main.cpp
+  WinMain
+   ↓
+App
+  ├─ Input
+  ├─ Camera
+  ├─ Scene
+  ├─ DemoController
+  ├─ RenderOptions
+  └─ std::unique_ptr<Renderer>
+        ↓
+     Renderer
+       ├─ RenderContext
+       ├─ CPUDescriptorAllocator
+       ├─ GPUDescriptorAllocator
+       ├─ TransientHeap / UploadHeap
+       ├─ MeshLibrary / Texture2D
+       ├─ SceneGpuData
+       ├─ AccelerationScene + TLASUpdatePass
+       ├─ G-buffer / Depth
+       ├─ DDGI
+       ├─ GiPipeline
+       ├─ LightingPass（旧调试路径）
+       └─ RenderGraph
+
+调用链：
+App::RenderTick
+  ↓
+Renderer::RenderFrame
+  ├─ TLASUpdatePass
+  ├─ GBufferPass
+  ↓
+  GiPipeline::AddPasses
+  ├─ DirectLighting
+  ├─ Diffuse Provider
+  ├─ Specular Provider
+  └─ Composite
+  ↓
+BackbufferToPresent
+
+GiPipeline                 公共门面
+  └─ Impl                  PIMPL，真正持有所有内部对象
+       ├─ LightingTarget        HDR 目标：纹理 + ResourceId + SRV
+       ├─ FullscreenPass        具体的全屏渲染 Pass
+       ├─ IGiProvider           GI 策略接口
+       │    ├─ ProbeGiProvider      DDGI 策略
+       │    └─ FullscreenGiProvider SSGI / RayTraced / SSR 策略
+       └─ GiPassParams          b5 参数
+
+
+类的final关键字设置：
+编译器会直接把这个虚函数调用改成普通的静态函数调用而不去查表
+
+RenderGraph Compile阶段：
+
+0.std::vector<std::vector<ResourceUse>> resourceUses(m_resources.size());
+遍历m_passes中所有usage来按照ResourceID来排列
+1.Write  std::vector<PassId> writers;
+逐Resource  从resourceUses里读取到该Resource的所有usage 并遍历这些usage 找到该资源的Transition PassID与
+以Version为索引将该版本号所在PassID写入writes 建立Write->Write的edge 
+
+2.Read 逐Resource 依旧 从resourceUses里读取到该Resource的所有usage 并遍历这些usage 并找到所有读操作
+根据writers 以version为index 建立writers[index]->readusage.PassID     RAW
+然后在建立readusage.PassID                                            WAR
+
+
+基于写操作的版本号的edge建边、
+建立所有Pass到最终Transition Pass的边、

@@ -6,7 +6,7 @@
 #include "ObjectConstants.h"
 #include <DirectXMath.h>
 
-void GBufferPass::Init(ID3D12PipelineState* pso,
+void GBufferPass::Init(ID3D12RootSignature* rootSignature, ID3D12PipelineState* pso,
     RenderTexture* albedo, RenderTexture* normal, DepthBuffer* depth,
     const Scene* scene, const MeshLibrary* meshLibrary, RenderTexture* volumeMask,
     RenderGraph::ResourceId albedoId,
@@ -14,6 +14,7 @@ void GBufferPass::Init(ID3D12PipelineState* pso,
     RenderGraph::ResourceId depthId,
     RenderGraph::ResourceId volumeMaskId)
 {
+    m_rootSignature = rootSignature;
     m_pso = pso;
     m_albedo = albedo;
     m_normal = normal;
@@ -52,6 +53,7 @@ void GBufferPass::Execute(RenderGraph::FrameContext& ctx)
     cmdList->ClearRenderTargetView(rtvs[2], clearMask, 0, nullptr);
     m_depth->Clear(cmdList);
 
+    cmdList->SetGraphicsRootSignature(m_rootSignature);
     cmdList->SetPipelineState(m_pso);
     cmdList->SetGraphicsRootConstantBufferView(1, ctx.frameConstantsAddress);
 

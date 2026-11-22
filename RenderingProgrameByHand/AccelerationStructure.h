@@ -44,8 +44,13 @@ namespace rt {
             D3D12_GPU_DESCRIPTOR_HANDLE   srv{};
         };
 
-        //获取当前帧 TLAS
-        D3D12_GPU_DESCRIPTOR_HANDLE GetTLASDescriptor(uint32_t frameIndex) const{  return m_tlasFrames[frameIndex % 3].srv; }
+        // 描述符用于着色器绑定，资源指针用于声明同一个 TLAS 的图依赖。
+        D3D12_GPU_DESCRIPTOR_HANDLE GetTLASDescriptor(uint32_t frameIndex) const {
+            return m_tlasFrames[frameIndex % kFrameCount].srv;
+        }
+        ID3D12Resource* GetTLASResource(uint32_t frameIndex) const {
+            return m_tlasFrames[frameIndex % kFrameCount].tlas.resource.Get();
+        }
 
         // 每帧更新 TLAS（实例矩阵变化），BLAS 复用
         void UpdateTLAS(ID3D12GraphicsCommandList* cmdList,
@@ -54,7 +59,7 @@ namespace rt {
 
     private:
         std::vector<AccelerationStructure> m_blas;//blas和tlas本质是一样的？只是使用方式既操作方法不同
-        TLASFrame                          m_tlasFrames[3]; // 后续多帧资源
+        TLASFrame                          m_tlasFrames[kFrameCount];
         // 初始实例数，阶段 2 固定 7 个物体
         uint32_t                           m_instanceCapacity = 0;
     };

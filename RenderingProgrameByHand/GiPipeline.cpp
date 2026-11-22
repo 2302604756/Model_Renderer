@@ -8,7 +8,9 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <functional>
 #include <initializer_list>
+#include <utility>
 
 namespace {
     constexpr DXGI_FORMAT kGiFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -66,7 +68,8 @@ namespace {
 
         void Schedule(RenderGraph& graph, const LightingParams& lighting, const GiPassParams& gi,
             std::initializer_list<GiTextureView> inputs, RenderGraph::ResourceId output,
-            D3D12_CPU_DESCRIPTOR_HANDLE rtv = {})
+            D3D12_CPU_DESCRIPTOR_HANDLE rtv = {},
+            std::function<void(RenderGraph::PassBuilder&)> declareExtra = {})
         {
             assert(inputs.size() <= m_inputs.size());
             m_inputs.fill({});
@@ -75,7 +78,10 @@ namespace {
             m_gi = gi;
             m_output = output;
             m_rtv = rtv;
-            graph.AddPass(*this);
+            if (declareExtra)
+                graph.AddPass(*this, std::move(declareExtra));
+            else
+                graph.AddPass(*this);
         }
 
         const char* GetName() const override { return m_name; }
@@ -136,7 +142,7 @@ namespace {
             if (resetHistory || !m_updatedLastFrame)
                 m_ddgi->RequestHistoryReset();
             m_ddgi->PrepareFrame(frame);
-            m_ddgi->AddUpdatePasses(graph);
+            m_ddgi->AddUpdatePasses(graph, frame.bindings.tlasResource);
             m_updatedThisFrame = true;
         }
 
@@ -157,7 +163,10 @@ namespace {
                 { inputs.gbuffer.albedo, inputs.gbuffer.normal, inputs.gbuffer.depth,
                   inputs.gbuffer.volumeMask, { probes.filteredAtlas, probes.filteredSrv },
                   { probes.distanceAtlas, probes.distanceSrv } },
-                m_target->view.resource, m_target->texture.GetRTV());
+                m_target->view.resource, m_target->texture.GetRTV(),
+                [probeData = probes.probeData](RenderGraph::PassBuilder& builder) {
+                    builder.Read(probeData, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 0);
+                });
             return m_target->view;
         }
 
@@ -183,14 +192,15 @@ namespace {
     public:
         void Init(LightingTarget& target, ID3D12Device* device, ID3D12RootSignature* root,
             const std::vector<uint8_t>& vs, const wchar_t* file, const wchar_t* entry,
-            const char* name, LightingSource source)
+            const char* name, LightingSource source, bool readsTlas = false)
         {
             m_target = &target;
             m_source = source;
+            m_readsTlas = readsTlas;
             m_pass.Init(device, root, vs, file, entry, name);
         }
 
-        GiTextureView AddPasses(RenderGraph& graph, RenderGraph::FrameContext&,
+        GiTextureView AddPasses(RenderGraph& graph, RenderGraph::FrameContext& frame,
             const GiInputs& inputs, bool) override
         {
             const GiTextureView direct = m_source != LightingSource::None ? inputs.directLighting : GiTextureView{};
@@ -203,15 +213,21 @@ namespace {
                 params.diffuseGiIndex = diffuse.srvIndex;
                 params.flags |= kHasDiffuse;
             }
+            const auto tlas = frame.bindings.tlasResource;
             m_pass.Schedule(graph, GBufferParams(inputs.gbuffer), params,
                 { inputs.gbuffer.albedo, inputs.gbuffer.normal, inputs.gbuffer.depth, direct, diffuse },
-                m_target->view.resource, m_target->texture.GetRTV());
+                m_target->view.resource, m_target->texture.GetRTV(),
+                [readsTlas = m_readsTlas, tlas](RenderGraph::PassBuilder& builder) {
+                    if (readsTlas)
+                        builder.Read(tlas, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+                });
             return m_target->view;
         }
 
     private:
         LightingTarget* m_target = nullptr;
         LightingSource m_source = LightingSource::None;
+        bool m_readsTlas = false;
         FullscreenPass m_pass;
     };
 }
@@ -270,7 +286,7 @@ void GiPipeline::Init(ID3D12Device* device, CPUDescriptorAllocator& cpuDescripto
         "CompositeLighting", DXGI_FORMAT_R8G8B8A8_UNORM);
     p.probes.Init(ddgi, p.diffuseTarget, device, p.root.Get(), vs);
     p.rayTraced.Init(p.diffuseTarget, device, p.root.Get(), vs, L"ShadersLighting.hlsl",
-        L"RayTracedDiffusePS", "RayTracedDiffuseGI", LightingSource::None);
+        L"RayTracedDiffusePS", "RayTracedDiffuseGI", LightingSource::None, true);
     p.screenDiffuse.Init(p.diffuseTarget, device, p.root.Get(), vs, L"ShadersScreenSpaceGI.hlsl",
         L"ScreenSpaceDiffusePS", "ScreenSpaceDiffuseGI", LightingSource::Direct);
     p.screenSpecular.Init(p.specularTarget, device, p.root.Get(), vs, L"ShadersScreenSpaceGI.hlsl",
@@ -283,7 +299,10 @@ void GiPipeline::AddPasses(RenderGraph& graph, RenderGraph::FrameContext& frame,
     auto& p = *m_impl;
     p.direct.Schedule(graph, GBufferParams(p.gbuffer), {},
         { p.gbuffer.albedo, p.gbuffer.normal, p.gbuffer.depth },
-        p.directTarget.view.resource, p.directTarget.texture.GetRTV());
+        p.directTarget.view.resource, p.directTarget.texture.GetRTV(),
+        [tlas = frame.bindings.tlasResource](RenderGraph::PassBuilder& builder) {
+            builder.Read(tlas, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+        });
 
     GiInputs inputs{ p.gbuffer, p.directTarget.view, {} };
     if (auto* diffuse = p.SelectDiffuse(options.diffuse))

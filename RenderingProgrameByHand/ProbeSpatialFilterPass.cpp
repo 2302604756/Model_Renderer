@@ -7,7 +7,6 @@ void ProbeSpatialFilterPass::Init(
     ID3D12RootSignature* rootSignature,
     ID3D12PipelineState* pso,
     ProbeGrid* probeGrid,
-    ID3D12Resource* filteredResource,
     RenderGraph::ResourceId rawAtlasId,
     RenderGraph::ResourceId filteredAtlasId,
     RenderGraph::ResourceId distanceAtlasId)
@@ -15,7 +14,6 @@ void ProbeSpatialFilterPass::Init(
     m_rootSignature = rootSignature;
     m_pso = pso;
     m_probeGrid = probeGrid;
-    m_filteredResource = filteredResource;
     m_rawAtlasId = rawAtlasId;
     m_filteredAtlasId = filteredAtlasId;
     m_distanceAtlasId = distanceAtlasId;
@@ -70,9 +68,4 @@ void ProbeSpatialFilterPass::Execute(RenderGraph::FrameContext& ctx)
         ctx.lightingConstantsAddress);
 
     cmdList->Dispatch(grid.GetProbeCount(), 1, 1);
-
-    D3D12_RESOURCE_BARRIER barrier{};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barrier.UAV.pResource = m_filteredResource;
-    cmdList->ResourceBarrier(1, &barrier);
 }

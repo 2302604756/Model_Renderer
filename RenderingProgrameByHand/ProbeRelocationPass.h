@@ -14,7 +14,8 @@ public:
         ID3D12PipelineState* pso,
         ProbeGrid* probeGrid,
         ProbeRayBuffer* rayBuffer,
-        RenderGraph::ResourceId rayBufferId);
+        RenderGraph::ResourceId rayBufferId,
+        RenderGraph::ResourceId probeDataId);
 
     const char* GetName() const override { return "ProbeRelocation"; }
     void Declare(RenderGraph::PassBuilder& builder) override;
@@ -29,5 +30,6 @@ private:
     ProbeGrid* m_probeGrid = nullptr;
     ProbeRayBuffer* m_rayBuffer = nullptr;
     RenderGraph::ResourceId m_rayBufferId = RenderGraph::kInvalidId;
+    RenderGraph::ResourceId m_probeDataId = RenderGraph::kInvalidId;
     uint32_t                m_frameIndex = 0;
 };

@@ -19,7 +19,7 @@ void ProbeRayShadePass::Init(ID3D12RootSignature* rootSignature,
 
 void ProbeRayShadePass::Declare(RenderGraph::PassBuilder& builder)
 {
-    builder.ReadWrite(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    builder.ReadWrite(m_rayBufferId, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 2);
 }
 
 void ProbeRayShadePass::Execute(RenderGraph::FrameContext& ctx)
@@ -42,8 +42,6 @@ void ProbeRayShadePass::Execute(RenderGraph::FrameContext& ctx)
     p.objectIndex = ctx.bindings.objectDataBindlessIndex;
 
 
-    // UAV barrier（写给下一步 texel pass）
-
     cmdList->SetComputeRootSignature(m_rootSignature);
     cmdList->SetPipelineState(m_pso);
 
@@ -60,10 +58,4 @@ void ProbeRayShadePass::Execute(RenderGraph::FrameContext& ctx)
     cmdList->SetComputeRootShaderResourceView(4, ctx.lightBufferAddress);
 
     cmdList->Dispatch((totalRays + 63) / 64, 1, 1);
-
-    // 保证 shade pass 能读到 ray 数据
-    D3D12_RESOURCE_BARRIER barrier{};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barrier.UAV.pResource = m_rayBuffer->GetResource();
-    cmdList->ResourceBarrier(1, &barrier);
 }

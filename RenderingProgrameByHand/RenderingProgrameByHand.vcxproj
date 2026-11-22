@@ -132,7 +132,6 @@
     <ClCompile Include="App.cpp" />
     <ClCompile Include="BindlessDescriptorHeap.cpp" />
     <ClCompile Include="Camera.cpp" />
-    <ClCompile Include="ComputeSmokePass.cpp" />
     <ClCompile Include="CPUDescriptorAllocator.cpp" />
     <ClCompile Include="d3d12lite.cpp" />
     <ClCompile Include="DDGI.cpp" />
@@ -172,7 +171,6 @@
     <ClInclude Include="App.h" />
     <ClInclude Include="BindlessDescriptorHeap.h" />
     <ClInclude Include="Camera.h" />
-    <ClInclude Include="ComputeSmokePass.h" />
     <ClInclude Include="CPUDescriptorAllocator.h" />
     <ClInclude Include="d3d.h" />
     <ClInclude Include="d3d12lite.h" />

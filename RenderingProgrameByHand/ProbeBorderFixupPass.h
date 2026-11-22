@@ -9,7 +9,7 @@ public:
     void Init(ID3D12RootSignature* rootSignature,
         ID3D12PipelineState* pso,
         RenderGraph::ResourceId atlasId,
-        ID3D12Resource* atlasResource, // UAV barrier 用
+        RenderGraph::Version outputVersion,
         uint32_t countX, uint32_t countY, uint32_t countZ,
         uint32_t uavIndex,
         uint32_t stride,
@@ -23,9 +23,9 @@ public:
 private:
     ID3D12RootSignature* m_rootSignature = nullptr;
     ID3D12PipelineState* m_pso = nullptr;
-    ID3D12Resource* m_atlasResource = nullptr;
 
     RenderGraph::ResourceId m_atlasId = RenderGraph::kInvalidId;
+    RenderGraph::Version m_outputVersion = 0;
 
     uint32_t m_countX = 0, m_countY = 0, m_countZ = 0;
     uint32_t m_uavIndex = 0;

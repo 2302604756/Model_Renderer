@@ -19,6 +19,7 @@ class GPUDescriptorAllocator;
 struct DDGILightingInputs {
     RenderGraph::ResourceId filteredAtlas; // 图中滤波辐照度图集的 ID，用于声明读取状态
     RenderGraph::ResourceId distanceAtlas; // 图中距离矩图集的 ID，用于声明读取状态
+    RenderGraph::ResourceId probeData;     // 读取图集时使用的探针偏移，来自本帧开始前的版本
     DirectX::XMFLOAT3 gridOrigin;           // 网格原点的世界坐标
     float gridSpacing;                     // 相邻格点的世界空间间距
     DirectX::XMUINT3 gridCounts;            // X、Y、Z 三轴上的探针数量
@@ -44,8 +45,8 @@ public:
     // 初始化后调用。ResourceId 供渲染图使用，SRV/UAV 槽供着色器访问描述符堆。
     DDGILightingInputs GetLightingInputs() const noexcept;
 
-    // 在本帧 TLAS 更新之后、Lighting 之前登记探针 pass，按顺序生成光照所需的图集。
-    void AddUpdatePasses(RenderGraph& graph);
+    // 登记探针更新 pass，并声明求交和着色对本帧 TLAS 的依赖。
+    void AddUpdatePasses(RenderGraph& graph, RenderGraph::ResourceId tlasId);
 
     // 请求下一次 PrepareFrame 使用探针帧号 0，重启时间累积。
     void RequestHistoryReset() noexcept { m_resetProbeHistory = true; }
@@ -68,6 +69,7 @@ private:
     RenderGraph::ResourceId m_probeDistanceId = RenderGraph::kInvalidId;
     RenderGraph::ResourceId m_probeFilteredAtlasId = RenderGraph::kInvalidId;
     RenderGraph::ResourceId m_probeRayBufferId = RenderGraph::kInvalidId;
+    RenderGraph::ResourceId m_probeDataId = RenderGraph::kInvalidId;
 
     // 各 compute pass 共享根签名，由各自的 PSO 选择着色器入口。两种图集边界修补共享一个 PSO。
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_probeRootSignature;

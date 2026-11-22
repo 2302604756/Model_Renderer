@@ -12,12 +12,16 @@ void DDGI::Init(ID3D12Device* device, GPUDescriptorAllocator& descriptors, Rende
 	m_probeGrid.BuildMasks(device, descriptors, volumes);
 	m_probeGridId = graph.RegisterResource(
 		"ProbeGrid", m_probeGrid.GetResource(),
-		D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+		D3D12_RESOURCE_STATE_UNORDERED_ACCESS, RenderGraph::ResourceContents::Preserved);
 
 	// 距离矩图集的 R、G 保存距离一阶和二阶矩，B 保存探针有效性。
 	m_probeDistanceId = graph.RegisterResource(
 		"ProbeDistanceAtlas", m_probeGrid.GetDistanceResource(),
-		D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+		D3D12_RESOURCE_STATE_UNORDERED_ACCESS, RenderGraph::ResourceContents::Preserved);
+
+	m_probeDataId = graph.RegisterResource(
+		"ProbeData", m_probeGrid.GetProbeDataResource(),
+		D3D12_RESOURCE_STATE_UNORDERED_ACCESS, RenderGraph::ResourceContents::Preserved);
 
 	// 滤波辐照度单独输出给 Lighting，下一帧仍使用原始图集做时间累积。
 	m_probeFilteredAtlasId = graph.RegisterResource(
@@ -55,7 +59,7 @@ void DDGI::Init(ID3D12Device* device, GPUDescriptorAllocator& descriptors, Rende
 
 	m_probeRayPass.Init(
 		m_probeRootSignature.Get(), m_probeRayPSO.Get(),
-		&m_probeGrid, &m_probeRayBuffer, m_probeRayBufferId);
+		&m_probeGrid, &m_probeRayBuffer, m_probeRayBufferId, m_probeDataId);
 
 	// 对求交结果计算辐射亮度。未命中时使用天空色，固定方向射线跳过辐照度着色。
 	auto shadeCsBlob = d3d12lite::CompileShaderSM66(
@@ -113,7 +117,7 @@ void DDGI::Init(ID3D12Device* device, GPUDescriptorAllocator& descriptors, Rende
 		m_probeRootSignature.Get(),
 		m_probeBorderPSO.Get(),
 		m_probeFilteredAtlasId,
-		m_probeGrid.GetFilteredResource(),
+		2,
 		probeDesc.countX,
 		probeDesc.countY,
 		probeDesc.countZ,
@@ -125,7 +129,7 @@ void DDGI::Init(ID3D12Device* device, GPUDescriptorAllocator& descriptors, Rende
 	// 距离矩更新只写 tile 内部。先补齐边缘，后续 Fixup 才能复制完整的距离矩 tile。
 	m_probeDistanceBorderPass.Init(
 		m_probeRootSignature.Get(), m_probeBorderPSO.Get(),
-		m_probeDistanceId, m_probeGrid.GetDistanceResource(),
+		m_probeDistanceId, 2,
 		probeDesc.countX, probeDesc.countY, probeDesc.countZ,
 		m_probeGrid.GetDistanceUAVIndex(), ProbeGrid::kDistanceTileStride,
 		m_probeGrid.GetDistanceAtlasWidth(), m_probeGrid.GetDistanceAtlasHeight());
@@ -162,7 +166,6 @@ void DDGI::Init(ID3D12Device* device, GPUDescriptorAllocator& descriptors, Rende
 		m_probeRootSignature.Get(),
 		m_probeSpatialFilterPSO.Get(),
 		&m_probeGrid,
-		m_probeGrid.GetFilteredResource(),
 		m_probeGridId,
 		m_probeFilteredAtlasId,
 		m_probeDistanceId);
@@ -180,7 +183,8 @@ void DDGI::Init(ID3D12Device* device, GPUDescriptorAllocator& descriptors, Rende
 		m_probeRelocationPSO.Get(),
 		&m_probeGrid,
 		&m_probeRayBuffer,
-		m_probeRayBufferId);
+		m_probeRayBufferId,
+		m_probeDataId);
 
 }
 
@@ -189,22 +193,25 @@ DDGILightingInputs DDGI::GetLightingInputs() const noexcept
 	// ResourceId 用于声明渲染图读取状态，描述符索引随常量传给着色器。
 	const auto& grid = m_probeGrid.GetDesc();
 	return {
-		m_probeFilteredAtlasId, m_probeDistanceId, grid.origin, grid.spacing,
+		m_probeFilteredAtlasId, m_probeDistanceId, m_probeDataId, grid.origin, grid.spacing,
 		{ grid.countX, grid.countY, grid.countZ },
 		m_probeGrid.GetFilteredSRVIndex(), m_probeGrid.GetDistanceSRVIndex(),
 		m_probeGrid.GetMaskSRVIndex(), m_probeGrid.GetProbeDataUAVIndex(),
 	};
 }
 
-void DDGI::AddUpdatePasses(RenderGraph& graph)
+void DDGI::AddUpdatePasses(RenderGraph& graph, RenderGraph::ResourceId tlasId)
 {
-	// RenderGraph 按登记顺序录制。先完成射线求交和着色，再更新依赖这批射线的两个图集。
-	graph.AddPass(m_probeRayPass);
-	graph.AddPass(m_probeRayShadePass);
+	// 求交和命中点着色都通过 TLAS 查询可见性。
+	const auto readTlas = [tlasId](RenderGraph::PassBuilder& builder) {
+		builder.Read(tlasId, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+	};
+	graph.AddPass(m_probeRayPass, readTlas);
+	graph.AddPass(m_probeRayShadePass, readTlas);
 	graph.AddPass(m_probeUpdatePass);
 	graph.AddPass(m_probeDistancePass);
 
-	// 补齐距离矩边缘后修复无效探针。空间滤波读取修复结果，最后只修补滤波输出的边缘。
+	// 图集版本约束距离矩补边、无效探针修复、空间滤波和滤波图集补边的依赖。
 	graph.AddPass(m_probeDistanceBorderPass);
 	graph.AddPass(m_probeFixupPass);
 	graph.AddPass(m_probeSpatialFilterPass);
