@@ -63,6 +63,28 @@ Cornell Box 场景：主射线命中的可见点按余弦加权半球采样 2 �
 
 > 下一步：时间累积 + QMC（低差异序列）采样降噪，然后进入 DDGI 探针系统。
 
+### DDGI vs Ray-Traced GI
+
+同一 Cornell Box、同一相机路径下，并排比较 DDGI 与 one-bounce ray-traced GI（16 spp）。DDGI 使用探针图集、八面体采样与时间累积，RT 路径直接对可见点做半球采样；这组对比用于观察低频间接光、墙面色溢和接触阴影的差异。
+
+[![DDGI vs Ray-Traced GI](docs/images/ddgi-vs-raytracing-poster.png)](docs/videos/ddgi-vs-raytracing.mp4)
+
+> 点击封面打开 MP4：`docs/videos/ddgi-vs-raytracing.mp4`。GitHub 可能以文件页而不是内嵌播放器打开视频。
+
+### 10×10 探针的 smoothstep 插值
+
+下图用于分析 DDGI 的三线性权重：左图是亮度只随平面 `y` 变化的二维灰度图，右图固定 `x` 观察 `y` 方向的亮度曲线，圆点标出探针所在行。可以看到 `smoothstep` 在探针附近压平、在格子中间加速变化，这正是早期条状伪影的来源之一。
+
+![10×10 探针的 smoothstep 插值](docs/images/ddgi-smoothstep-10x10.png)
+
+### 漏光修复前后
+
+同一场景、同一相机，对比墙边探针修正前后的低亮度泄漏。差异主要集中在墙边和接触处，静态截图不一定非常明显；建议结合上面的 DDGI / RT 对比视频一起看。
+
+| 修复前 | 修复后 |
+|:--:|:--:|
+| ![DDGI 漏光 - 修复前](docs/images/ddgi-leak-before.png) | ![DDGI 漏光 - 修复后](docs/images/ddgi-leak-after.png) |
+
 ---
 
 ## 🎮 交互与调试
@@ -89,6 +111,7 @@ Cornell Box 场景：主射线命中的可见点按余弦加权半球采样 2 �
 
 | 日期 | 更新内容 |
 |:--|:--|
+| 2026-11-23 | **README 效果补充**：加入 DDGI vs Ray-Traced GI 视频、10×10 探针 smoothstep 插值分析图、漏光修复前后对比图 |
 | 2026-11-22 | **Renderer / GiPipeline / RenderGraph 改造**：App 不再持有 GPU 资源；新增 GI Provider 编排层；RenderGraph 支持资源版本、RAW/WAR 依赖、拓扑排序、自动 Transition/UAV barrier 与 TLAS 图资源跟踪 |
 | 2026-10-24 | **纯光追 GI（one-bounce path tracing）**：命中点取几何属性 + 二次阴影射线，Cornell Box 出现 color bleeding；README 增加效果展示与更新记录模块 |
 | 2026-10-23 | **DXR 光追**：BLAS/TLAS 构建 + `rt::AccelerationScene` 封装 + 像素着色器 ray query 太阳阴影；`GPUObjectData` 走 GPU_UPLOAD + bindless SRV，供 GI 使用；README 补充工程笔记 |
