@@ -8,7 +8,37 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <string>
+
+namespace {
+std::string ResolveAssetPath(const char* relativePath)
+{
+	namespace fs = std::filesystem;
+	const fs::path rel(relativePath);
+	if (fs::exists(rel))
+		return rel.string();
+	const fs::path nested = fs::path("RenderingProgrameByHand") / rel;
+	if (fs::exists(nested))
+		return nested.string();
+
+	wchar_t exeBuf[MAX_PATH] = {};
+	if (GetModuleFileNameW(nullptr, exeBuf, MAX_PATH) > 0)
+	{
+		const fs::path exeDir = fs::path(exeBuf).parent_path();
+		for (const fs::path& base : { exeDir, exeDir.parent_path(), exeDir.parent_path().parent_path() })
+		{
+			const fs::path c1 = base / rel;
+			if (fs::exists(c1))
+				return c1.string();
+			const fs::path c2 = base / "RenderingProgrameByHand" / rel;
+			if (fs::exists(c2))
+				return c2.string();
+		}
+	}
+	return rel.string();
+}
+}
 
 Renderer::Renderer(Scene& scene) : m_scene(scene)
 {
@@ -62,7 +92,7 @@ void Renderer::Init(HWND hwnd)
 
 	// 把示例 DDS 上传到 GPU，并将纹理的 SRV 写到共享 bindless 堆。
 	m_texture = Texture2D::LoadFromFilePlaced(
-		R"(D:\C++files\RenderingProgrameByHand\RenderingProgrameByHand\assets\test.dds)",
+		ResolveAssetPath("assets/test.dds"),
 		m_physicalHeap, m_uploadHeap, m_gpuAllocator
 	);
 	// 上传立方体、球和平面网格。场景使用网格 ID，光追着色通过 bindless 描述符访问其数据。

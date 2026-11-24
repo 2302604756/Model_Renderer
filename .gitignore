@@ -361,3 +361,8 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# RenderDoc captures & temporary recordings
+*.rdc
+/ddgi-vs-raytracing.mp4
+/第一版光追.mp4
